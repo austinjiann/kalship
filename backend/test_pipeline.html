@@ -109,13 +109,8 @@
         </div>
 
         <div class="form-group">
-            <label for="bet">bet</label>
-            <textarea id="bet" placeholder=''></textarea>
-        </div>
-
-        <div class="form-group">
-            <label for="duration">Duration (seconds)</label>
-            <input type="number" id="duration" value="6" min="2" max="10">
+            <label for="originalBetLink">Original Bet Link *</label>
+            <input type="url" id="originalBetLink" placeholder="https://kalshi.com/markets/..." required>
         </div>
 
         <button type="submit" id="submitBtn">Start Job</button>
@@ -163,18 +158,7 @@
 
             const title = document.getElementById('title').value;
             const caption = document.getElementById('caption').value;
-            const betStr = document.getElementById('bet').value;
-            const duration = parseInt(document.getElementById('duration').value);
-
-            let bet = null;
-            if (betStr.trim()) {
-                try {
-                    bet = JSON.parse(betStr);
-                } catch (err) {
-                    log('Invalid JSON in bet field', 'error');
-                    return;
-                }
-            }
+            const originalBetLink = document.getElementById('originalBetLink').value;
 
             submitBtn.disabled = true;
             stopBtn.disabled = false;
@@ -185,10 +169,14 @@
             try {
                 log('Creating job...', 'info');
 
-                const response = await fetch(`${getApiUrl()}/api/jobs/create`, {
+                const response = await fetch(`${getApiUrl()}/jobs/create`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ title, caption, bet, duration_seconds: duration })
+                    body: JSON.stringify({
+                        title,
+                        caption,
+                        original_bet_link: originalBetLink
+                    })
                 });
 
                 if (!response.ok) {
@@ -219,7 +207,7 @@
             try {
                 log('Polling status...');
 
-                const response = await fetch(`${getApiUrl()}/api/jobs/status/${jobId}`);
+                const response = await fetch(`${getApiUrl()}/jobs/status/${jobId}`);
                 const data = await response.json();
 
                 statusText.textContent = data.status;

@@ -3,7 +3,6 @@ uvicorn
 google-genai
 google-cloud-storage
 google-cloud-tasks
-firebase-admin
 python-dotenv
 pydantic-settings
 httpx

@@ -1,5 +1,12 @@
 from google import genai
-from google.genai.types import GenerateVideosConfig, GenerateVideosOperation, Image, GenerateContentConfig, ImageConfig, Part, VideoGenerationReferenceImage
+from google.genai.types import (
+    GenerateVideosConfig,
+    GenerateVideosOperation,
+    Image,
+    GenerateContentConfig,
+    ImageConfig,
+    Part,
+)
 from models.job import JobStatus
 from utils.env import settings
 
@@ -39,16 +46,13 @@ class VertexService:
 
         return operation
     
-    async def generate_image_content(
+    async def generate_image_from_prompt(
         self,
-        title: str,
-        caption: str,
-        additional: str | None = None,
-        image: bytes | None = None
+        prompt: str,
+        image: bytes | None = None,
     ) -> bytes:
-        prompt = f"{title}\n{caption}"
-        if additional:
-            prompt += f"\n{additional}"
+        if not prompt:
+            raise ValueError("prompt is required")
 
         if image:
             # Image-to-image
@@ -74,6 +78,18 @@ class VertexService:
         if not response.candidates or not response.candidates[0].content.parts:
             raise Exception(str(response))
         return response.candidates[0].content.parts[0].inline_data.data
+
+    async def generate_image_content(
+        self,
+        title: str,
+        caption: str,
+        additional: str | None = None,
+        image: bytes | None = None
+    ) -> bytes:
+        prompt = f"{title}\n{caption}"
+        if additional:
+            prompt += f"\n{additional}"
+        return await self.generate_image_from_prompt(prompt=prompt, image=image)
     
     async def get_video_status(self, operation: GenerateVideosOperation) -> JobStatus:
         operation = self.client.operations.get(operation)

@@ -1,7 +1,7 @@
 def create_video_prompt(
     title: str,
     caption: str,
-    metadata: dict | None = None
+    original_bet_link: str,
 ) -> str:
     """
     Build an exciting, action-focused prompt for Veo video generation.
@@ -12,7 +12,7 @@ def create_video_prompt(
     Args:
         title: Short title (e.g., "Epic UFC Knockout")
         caption: Description of what happens (e.g., "Topuria throws a devastating left hook")
-        metadata: Optional context (e.g., {"sport": "mma", "event": "UFC 298"})
+        original_bet_link: Kalshi market link for context
 
     Returns:
         Cinematic, action-packed video prompt
@@ -35,14 +35,7 @@ def create_video_prompt(
     if title:
         prompt_parts.append(f"Scene: {title}")
 
-    # Add metadata context if relevant
-    if metadata:
-        if metadata.get("sport"):
-            prompt_parts.append(f"Sport: {metadata['sport']}")
-        if metadata.get("event"):
-            prompt_parts.append(f"Event: {metadata['event']}")
-        if metadata.get("style"):
-            prompt_parts.append(f"Style: {metadata['style']}")
+    prompt_parts.append(f"Prediction market context: {original_bet_link}")
 
     # Add quality/style modifiers
     prompt_parts.append("Professional broadcast quality, dynamic camera movement, vivid colors")

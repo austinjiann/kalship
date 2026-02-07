@@ -9,9 +9,15 @@ class Worker(APIController):
 
     @post("/process")
     async def process_job(self, data: dict) -> Response:
-        job_id = data.get("job_id")
-        if not job_id:
-            return json({"error": "job_id required"}, status=400)
+        required = ("job_id", "title", "caption", "original_bet_link")
+        missing = [key for key in required if not data.get(key)]
+        if missing:
+            return json(
+                {"error": f"Missing required fields: {', '.join(missing)}"},
+                status=400,
+            )
+
+        job_id = data["job_id"]
 
         # Process the job
         await self.job_service.process_video_job(job_id, data)

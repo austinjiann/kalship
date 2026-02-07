@@ -8,7 +8,7 @@ class VideoJobRequest:
     """Request to create a video job"""
     title: str
     caption: str
-    bet: Optional[dict] = None
+    original_bet_link: str
     duration_seconds: int = 6
 
 
@@ -18,7 +18,7 @@ class WorkerJobPayload:
     job_id: str
     title: str
     caption: str
-    bet: Optional[dict] = None
+    original_bet_link: str
     duration_seconds: int = 6
 
 
@@ -29,4 +29,4 @@ class JobStatus:
     job_end_time: Optional[datetime] = None
     video_url: Optional[str] = None
     error: Optional[str] = None
-    bet: Optional[dict] = None
+    original_bet_link: Optional[str] = None

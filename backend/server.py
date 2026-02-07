@@ -9,8 +9,8 @@ from services.vertex_service import VertexService
 services = Container()
 services.add_scoped(TestService)
 services.add_scoped(FeedService)
-services.add_scoped(VertexService)
-services.add_scoped(JobService)
+services.add_singleton(VertexService)
+services.add_singleton(JobService)
 
 app = Application(services=services)
 

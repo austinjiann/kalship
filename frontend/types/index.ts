@@ -22,8 +22,10 @@ export interface FeedItem {
 
 export interface JobStatus {
   job_id: string
-  status: 'pending' | 'processing' | 'done' | 'failed'
+  status: 'waiting' | 'done' | 'error'
+  video_url?: string | null
   error: string | null
+  original_bet_link?: string | null
 }
 
 export interface GeneratedVideo {
