@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from models.job import JobStatus, VideoJobRequest
 from services.vertex_service import VertexService
-from utils.veo_prompt_builder import create_video_prompt
+from utils.env import settings
 import uuid
 import asyncio
 import traceback
@@ -13,57 +13,57 @@ class JobService:
         self.vertex_service = vertex_service
         # In-memory job storage
         self.jobs: dict[str, dict] = {}
-        self.current_image: bytes | None = None
+
+        # Cloud Tasks client (only init if in production mode)
+        self.cloud_tasks = None
+        if settings.WORKER_SERVICE_URL:
+            from services.cloud_tasks_service import CloudTasksService
+            self.cloud_tasks = CloudTasksService()
 
     async def create_video_job(self, request: VideoJobRequest) -> str:
+        """Create a video job - uses Cloud Tasks in prod, asyncio locally"""
         job_id = str(uuid.uuid4())
 
-        # Store pending job before starting background task
+        # Store pending job
         self.jobs[job_id] = {
             "status": "pending",
-            "job_start_time": datetime.now().isoformat()
+            "job_start_time": datetime.now().isoformat(),
         }
 
-        # Start background task
-        asyncio.create_task(self._process_video_job(job_id, request))
+        job_data = {
+            "title": request.title,
+            "caption": request.caption,
+            "duration_seconds": request.duration_seconds
+        }
+
+        if self.cloud_tasks:
+            # Production: enqueue to Cloud Tasks
+            self.cloud_tasks.enqueue_video_job(job_id, job_data)
+        else:
+            # Local: use asyncio background task
+            asyncio.create_task(self.process_video_job(job_id, job_data))
 
         return job_id
 
-    async def _process_video_job(self, job_id: str, request: VideoJobRequest):
-        """Background task that processes the video generation"""
+    async def process_video_job(self, job_id: str, job_data: dict):
+        """Process video generation - called by worker or asyncio"""
         try:
-            # Parallel tasks
-            tasks = [
-                self.vertex_service.analyze_image_content(
-                    prompt="Describe any animation annotations you see. Use this description to inform a video director. Be descriptive about location and purpose of the annotations.",
-                    image_data=request.starting_image
-                ),
-                self.vertex_service.generate_image_content(
-                    title="Remove all text, captions, subtitles, annotations from this image.",
-                    caption="Generate a clean version of the image with no text. Keep everything else the exact same.",
-                    image=request.starting_image
-                )
-            ]
+            title = job_data["title"]
+            caption = job_data["caption"]
+            duration = job_data.get("duration_seconds", 6)
 
-            if request.ending_image:
-                tasks.append(
-                    self.vertex_service.generate_image_content(
-                        title="Remove all text, captions, subtitles, annotations from this image.",
-                        caption="Generate a clean version of the image with no text. Keep the art/image style the exact same.",
-                        image=request.ending_image
-                    )
-                )
+            # Step 1: Generate start frame from title + caption
+            start_frame = await self.vertex_service.generate_image_content(
+                title=title,
+                caption=caption
+            )
 
-            results = await asyncio.gather(*tasks)
-            annotation_description = results[0]
-            starting_frame = results[1]
-            ending_frame = results[2] if len(results) > 2 else None
-
+            # Step 2: Generate video from start frame
+            prompt = f"{title}\n{caption}"
             operation = await self.vertex_service.generate_video_content(
-                create_video_prompt(request.custom_prompt, request.global_context, annotation_description),
-                starting_frame,
-                ending_frame,
-                request.duration_seconds
+                prompt=prompt,
+                image_data=start_frame,
+                duration_seconds=duration
             )
 
             # Store operation name for polling
@@ -71,7 +71,6 @@ class JobService:
                 "status": "processing",
                 "operation_name": operation.name,
                 "job_start_time": datetime.now().isoformat(),
-                "metadata": {"annotation_description": annotation_description}
             }
 
         except Exception as e:
@@ -111,7 +110,6 @@ class JobService:
                 status="done",
                 job_start_time=job_start_time,
                 video_url=job.get("video_url"),
-                metadata=job.get("metadata")
             )
 
         # Processing - poll Vertex AI
@@ -128,36 +126,18 @@ class JobService:
                     status="done",
                     job_start_time=job_start_time,
                     video_url=video_url,
-                    metadata=job.get("metadata")
                 )
 
             return JobStatus(
                 status="waiting",
                 job_start_time=job_start_time,
-                metadata=job.get("metadata")
             )
 
         return None
 
-    # Image generation helpers
-    async def generate_image(
-        self,
-        title: str,
-        caption: str,
-        additional: str | None = None
-    ) -> bytes:
-        """Generate image, using previous image if available (image-to-image)"""
-        result = await self.vertex_service.generate_image_content(
-            title=title,
-            caption=caption,
-            additional=additional,
-            image=self.current_image
-        )
-        self.current_image = result
-        return result
-
-    def reset_image_state(self):
-        self.current_image = None
-
-    def has_image(self) -> bool:
-        return self.current_image is not None
+    def update_job(self, job_id: str, data: dict):
+        """Update job data (used by worker)"""
+        if job_id in self.jobs:
+            self.jobs[job_id].update(data)
+        else:
+            self.jobs[job_id] = data

@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Pipeline Test</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1a1a2e;
+            color: #eee;
+        }
+        h1 { color: #00d9ff; }
+        .form-group {
+            margin-bottom: 16px;
+        }
+        label {
+            display: block;
+            margin-bottom: 4px;
+            color: #aaa;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 8px;
+            background: #16213e;
+            color: #fff;
+            font-size: 14px;
+        }
+        textarea { resize: vertical; min-height: 80px; }
+        button {
+            padding: 12px 24px;
+            background: #00d9ff;
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-right: 8px;
+        }
+        button:hover { background: #00b8d9; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        #status {
+            margin-top: 24px;
+            padding: 16px;
+            background: #16213e;
+            border-radius: 8px;
+            border-left: 4px solid #00d9ff;
+        }
+        #status.error { border-left-color: #ff4757; }
+        #status.done { border-left-color: #2ed573; }
+        .log {
+            margin-top: 16px;
+            padding: 12px;
+            background: #0f0f23;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .log-entry { margin: 4px 0; color: #888; }
+        .log-entry.info { color: #00d9ff; }
+        .log-entry.success { color: #2ed573; }
+        .log-entry.error { color: #ff4757; }
+        video {
+            width: 100%;
+            max-width: 640px;
+            margin-top: 16px;
+            border-radius: 8px;
+        }
+        .api-url {
+            margin-bottom: 20px;
+            padding: 8px 12px;
+            background: #16213e;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+        .api-url input {
+            background: transparent;
+            border: none;
+            color: #00d9ff;
+        }
+    </style>
+</head>
+<body>
+    <h1>Video Pipeline Test</h1>
+
+    <div class="api-url">
+        <label>API URL:</label>
+        <input type="text" id="apiUrl" value="http://localhost:8000">
+    </div>
+
+    <form id="jobForm">
+        <div class="form-group">
+            <label for="title">Title *</label>
+            <input type="text" id="title" placeholder="e.g., Epic UFC Knockout" required>
+        </div>
+
+        <div class="form-group">
+            <label for="caption">Caption *</label>
+            <textarea id="caption" placeholder="e.g., Fighter throws devastating left hook, opponent crumbles to the canvas in slow motion" required></textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="bet">bet</label>
+            <textarea id="bet" placeholder=''></textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="duration">Duration (seconds)</label>
+            <input type="number" id="duration" value="6" min="2" max="10">
+        </div>
+
+        <button type="submit" id="submitBtn">Start Job</button>
+        <button type="button" id="stopBtn" disabled>Stop Polling</button>
+    </form>
+
+    <div id="status" style="display: none;">
+        <strong>Status:</strong> <span id="statusText">-</span><br>
+        <strong>Job ID:</strong> <span id="jobId">-</span>
+    </div>
+
+    <div id="videoContainer" style="display: none;">
+        <h3>Generated Video</h3>
+        <video id="videoPlayer" controls></video>
+    </div>
+
+    <div class="log" id="log"></div>
+
+    <script>
+        const form = document.getElementById('jobForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const statusDiv = document.getElementById('status');
+        const statusText = document.getElementById('statusText');
+        const jobIdSpan = document.getElementById('jobId');
+        const videoContainer = document.getElementById('videoContainer');
+        const videoPlayer = document.getElementById('videoPlayer');
+        const logDiv = document.getElementById('log');
+
+        let pollInterval = null;
+
+        function log(message, type = '') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.insertBefore(entry, logDiv.firstChild);
+        }
+
+        function getApiUrl() {
+            return document.getElementById('apiUrl').value.replace(/\/$/, '');
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const title = document.getElementById('title').value;
+            const caption = document.getElementById('caption').value;
+            const betStr = document.getElementById('bet').value;
+            const duration = parseInt(document.getElementById('duration').value);
+
+            let bet = null;
+            if (betStr.trim()) {
+                try {
+                    bet = JSON.parse(betStr);
+                } catch (err) {
+                    log('Invalid JSON in bet field', 'error');
+                    return;
+                }
+            }
+
+            submitBtn.disabled = true;
+            stopBtn.disabled = false;
+            statusDiv.style.display = 'block';
+            statusDiv.className = '';
+            videoContainer.style.display = 'none';
+
+            try {
+                log('Creating job...', 'info');
+
+                const response = await fetch(`${getApiUrl()}/api/jobs/create`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, caption, bet, duration_seconds: duration })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+
+                const data = await response.json();
+                const jobId = data.job_id;
+
+                jobIdSpan.textContent = jobId;
+                statusText.textContent = 'Pending';
+                log(`Job created: ${jobId}`, 'success');
+
+                // Start polling
+                pollInterval = setInterval(() => pollStatus(jobId), 3000);
+                pollStatus(jobId); // Initial poll
+
+            } catch (err) {
+                log(`Error: ${err.message}`, 'error');
+                statusText.textContent = 'Error';
+                statusDiv.className = 'error';
+                submitBtn.disabled = false;
+                stopBtn.disabled = true;
+            }
+        });
+
+        async function pollStatus(jobId) {
+            try {
+                log('Polling status...');
+
+                const response = await fetch(`${getApiUrl()}/api/jobs/status/${jobId}`);
+                const data = await response.json();
+
+                statusText.textContent = data.status;
+                log(`Status: ${data.status}`);
+
+                if (data.status === 'done') {
+                    clearInterval(pollInterval);
+                    statusDiv.className = 'done';
+                    submitBtn.disabled = false;
+                    stopBtn.disabled = true;
+
+                    log(`Video ready: ${data.video_url}`, 'success');
+
+                    if (data.video_url) {
+                        videoPlayer.src = data.video_url;
+                        videoContainer.style.display = 'block';
+                    }
+                } else if (data.status === 'error') {
+                    clearInterval(pollInterval);
+                    statusDiv.className = 'error';
+                    submitBtn.disabled = false;
+                    stopBtn.disabled = true;
+                    log(`Error: ${data.error}`, 'error');
+                }
+
+            } catch (err) {
+                log(`Poll error: ${err.message}`, 'error');
+            }
+        }
+
+        stopBtn.addEventListener('click', () => {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+            submitBtn.disabled = false;
+            stopBtn.disabled = true;
+            log('Polling stopped', 'info');
+        });
+    </script>
+</body>
+</html>

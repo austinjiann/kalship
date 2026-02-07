@@ -4,15 +4,28 @@ from blacksheep.server.controllers import APIController, post, get
 from services.job_service import JobService
 from models.job import VideoJobRequest
 
-
 class Jobs(APIController):
     def __init__(self, job_service: JobService):
         self.job_service = job_service
 
     @post("/create")
-    async def create_job(self, request: VideoJobRequest) -> Response:
-        job_id = await self.job_service.create_video_job(request)
-        return json({"job_id": job_id})
+    async def create_job(self, request):
+        ct = request.headers.get("content-type") or ""
+        if "application/json" in ct:
+            body = await request.json()
+        else:
+            form = await request.form()
+            body = {k: form.get(k) for k in form}
+            raw_meta = body.get("bet")
+            if raw_meta and isinstance(raw_meta, str):
+                try:
+                    import json
+                    body["bet"] = json.loads(raw_meta)
+                except Exception:
+                    pass
+
+        job_id = await self.job_service.create_video_job(body)
+        return {"job_id": job_id}
 
     @get("/status/{job_id}")
     async def get_status(self, job_id: str) -> Response:
@@ -25,5 +38,5 @@ class Jobs(APIController):
             "status": status.status,
             "video_url": status.video_url,
             "error": status.error,
-            "metadata": status.metadata
+            "bet": status.bet
         })

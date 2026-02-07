@@ -5,10 +5,20 @@ from typing import Optional, Literal
 
 @dataclass
 class VideoJobRequest:
-    starting_image: bytes
-    custom_prompt: Optional[str] = None
-    global_context: Optional[str] = None
-    ending_image: Optional[bytes] = None
+    """Request to create a video job"""
+    title: str
+    caption: str
+    bet: Optional[dict] = None
+    duration_seconds: int = 6
+
+
+@dataclass
+class WorkerJobPayload:
+    """Payload sent to worker for processing"""
+    job_id: str
+    title: str
+    caption: str
+    bet: Optional[dict] = None
     duration_seconds: int = 6
 
 
@@ -19,4 +29,4 @@ class JobStatus:
     job_end_time: Optional[datetime] = None
     video_url: Optional[str] = None
     error: Optional[str] = None
-    metadata: Optional[dict] = None
+    bet: Optional[dict] = None

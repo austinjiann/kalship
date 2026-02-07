@@ -46,8 +46,3 @@ class Shorts(APIController):
                 "kalshi": item["kalshi"],
             })
         return json(feed)
-
-    @get("/analyze")
-    async def analyze_video(self, video_id: str = "vHaPgrSMlI0"):
-        metadata = await self.feed_service.get_video_metadata(video_id)
-        return json({"video_id": video_id, "metadata": metadata})
