@@ -9,7 +9,8 @@ class VideoJobRequest:
     title: str
     caption: str
     original_bet_link: str
-    duration_seconds: int = 6
+    duration_seconds: int = 8
+    source_image_url: Optional[str] = None  # Optional real image to use as base
 
 
 @dataclass
@@ -30,3 +31,5 @@ class JobStatus:
     video_url: Optional[str] = None
     error: Optional[str] = None
     original_bet_link: Optional[str] = None
+    image1_url: Optional[str] = None
+    image2_url: Optional[str] = None

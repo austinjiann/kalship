@@ -4,40 +4,19 @@ def create_video_prompt(
     original_bet_link: str,
 ) -> str:
     """
-    Build an exciting, action-focused prompt for Veo video generation.
-
-    Veo takes: start frame image + end frame image + prompt
-    This prompt should describe the ACTION/MOTION between the frames.
-
-    Args:
-        title: Short title (e.g., "Epic UFC Knockout")
-        caption: Description of what happens (e.g., "Topuria throws a devastating left hook")
-        original_bet_link: Kalshi market link for context
-
-    Returns:
-        Cinematic, action-packed video prompt
+    Build a Veo prompt that creates logical motion between start and end frames.
     """
-    # Base prompt structure for exciting video
-    prompt_parts = []
+    return f"""Create a smooth, logical transition from the first frame to the last frame.
 
-    # Add cinematic context
-    prompt_parts.append("Cinematic sports footage, dramatic slow motion, high energy")
+ACTION: {caption}
 
-    # Add the main action from caption
-    if caption:
-        # Transform caption into action-focused language
-        action_prompt = caption
-        # Add intensity modifiers
-        action_prompt = f"{action_prompt}, crowd erupts, intense atmosphere"
-        prompt_parts.append(action_prompt)
+RULES:
+- Motion must be physically realistic and logical
+- Objects and people stay consistent (no disappearing helmets, no teleporting)
+- Forward motion only - balls thrown forward, people move forward
+- Can use cinematic cuts/transitions if needed to connect the scenes
+- Think like a movie director editing a highlight reel
 
-    # Add title context
-    if title:
-        prompt_parts.append(f"Scene: {title}")
+STYLE: Professional sports broadcast, cinematic, high energy
 
-    prompt_parts.append(f"Prediction market context: {original_bet_link}")
-
-    # Add quality/style modifiers
-    prompt_parts.append("Professional broadcast quality, dynamic camera movement, vivid colors")
-
-    return "\n".join(prompt_parts)
+Connect these two frames with exciting but LOGICAL action."""

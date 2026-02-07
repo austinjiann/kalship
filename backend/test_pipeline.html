@@ -75,6 +75,38 @@
             margin-top: 16px;
             border-radius: 8px;
         }
+        .images-container {
+            display: flex;
+            gap: 16px;
+            margin-top: 16px;
+            flex-wrap: wrap;
+        }
+        .image-box {
+            flex: 1;
+            min-width: 280px;
+            background: #16213e;
+            border-radius: 8px;
+            padding: 12px;
+        }
+        .image-box h4 {
+            margin: 0 0 8px 0;
+            color: #00d9ff;
+        }
+        .image-box img {
+            width: 100%;
+            border-radius: 4px;
+            background: #0f0f23;
+        }
+        .image-box .placeholder {
+            width: 100%;
+            height: 180px;
+            background: #0f0f23;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #555;
+        }
         .api-url {
             margin-bottom: 20px;
             padding: 8px 12px;
@@ -103,7 +135,7 @@
             <input
                 type="text"
                 id="title"
-                value="Epic UFC Knockout"
+                value="Seahawks Win Super Bowl"
                 required
             >
         </div>
@@ -113,7 +145,7 @@
             <textarea
                 id="caption"
                 required
-            >Fighter throws devastating left hook, opponent crumbles to the canvas in slow motion</textarea>
+            >The Seattle Seahawks score the winning touchdown as the crowd goes wild, confetti falls from the sky in celebration</textarea>
         </div>
 
         <div class="form-group">
@@ -121,8 +153,28 @@
             <input
                 type="url"
                 id="originalBetLink"
-                value="https://kalshi.com/markets/kxufcfight/ufc-fight/kxufcfight-26feb07baudeo"
+                value="https://kalshi.com/markets/nfl/super-bowl-winner"
                 required
+            >
+        </div>
+
+        <div class="form-group">
+            <label for="duration">Duration (seconds, 5-8)</label>
+            <input
+                type="number"
+                id="duration"
+                value="8"
+                min="5"
+                max="8"
+            >
+        </div>
+
+        <div class="form-group">
+            <label for="sourceImageUrl">Source Image URL (optional - use real image as base)</label>
+            <input
+                type="url"
+                id="sourceImageUrl"
+                value="https://www.google.com/search?sca_esv=f20a71d25da966d7&sxsrf=ANbL-n5r4cKieqh_MaUshEXQh6NiKrl63A:1770463954770&udm=2&fbs=ADc_l-aN0CWEZBOHjofHoaMMDiKpaEWjvZ2Py1XXV8d8KvlI3jljrY5CkLlk8Dq3IvwBz-Qg9gdZYJriKd9fBMKKfwqZ_e3FddxbRXrqCdfw8KnLTbXcg0h9K3_uiKnYbCekiPkg8u88d2nMyC5a8WrzUQvLhj54JoFpffhFxHaUjXaLxHS4vlfa_7aR-U3oqOf7cZ-c0C9hYVMEJh5HDCFhqq_kSugVpQ&q=seahawks+action&sa=X&ved=2ahUKEwiYk_KYpMeSAxV_m4kEHetPC4cQtKgLegQICRAB&biw=1492&bih=924&dpr=2#sv=CAMSVhoyKhBlLVltM3RCdHh2a0lEQ2hNMg5ZbTN0QnR4dmtJRENoTToOOFZVZ0c1V1pja1Eza00gBCocCgZtb3NhaWMSEGUtWW0zdEJ0eHZrSURDaE0YADABGAcg6N3nvQcwAkoIEAIYAiACKAI"
             >
         </div>
 
@@ -133,6 +185,22 @@
     <div id="status" style="display: none;">
         <strong>Status:</strong> <span id="statusText">-</span><br>
         <strong>Job ID:</strong> <span id="jobId">-</span>
+    </div>
+
+    <div id="imagesContainer" style="display: none;">
+        <h3>Gemini Generated Images</h3>
+        <div class="images-container">
+            <div class="image-box">
+                <h4>Image 1 (Start Frame)</h4>
+                <div id="image1Placeholder" class="placeholder">Waiting...</div>
+                <img id="image1" style="display: none;" alt="Generated Image 1">
+            </div>
+            <div class="image-box">
+                <h4>Image 2 (End Frame)</h4>
+                <div id="image2Placeholder" class="placeholder">Waiting...</div>
+                <img id="image2" style="display: none;" alt="Generated Image 2">
+            </div>
+        </div>
     </div>
 
     <div id="videoContainer" style="display: none;">
@@ -149,17 +217,44 @@
         const statusDiv = document.getElementById('status');
         const statusText = document.getElementById('statusText');
         const jobIdSpan = document.getElementById('jobId');
+        const imagesContainer = document.getElementById('imagesContainer');
+        const image1 = document.getElementById('image1');
+        const image1Placeholder = document.getElementById('image1Placeholder');
+        const image2 = document.getElementById('image2');
+        const image2Placeholder = document.getElementById('image2Placeholder');
         const videoContainer = document.getElementById('videoContainer');
         const videoPlayer = document.getElementById('videoPlayer');
         const logDiv = document.getElementById('log');
 
         let pollInterval = null;
+        let image1Loaded = false;
+        let image2Loaded = false;
 
         function log(message, type = '') {
             const entry = document.createElement('div');
             entry.className = `log-entry ${type}`;
-            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            const timestamp = new Date().toISOString();
+            entry.textContent = `[${timestamp}] ${message}`;
             logDiv.insertBefore(entry, logDiv.firstChild);
+            console.log(`[${type || 'log'}] ${timestamp}: ${message}`);
+        }
+
+        async function testGcsUrl(url) {
+            log(`Testing GCS URL accessibility: ${url}`, 'info');
+            try {
+                const response = await fetch(url, { method: 'HEAD', mode: 'cors' });
+                if (response.ok) {
+                    log(`GCS URL accessible! Status: ${response.status}`, 'success');
+                    return true;
+                } else {
+                    log(`GCS URL returned status ${response.status}: ${response.statusText}`, 'error');
+                    return false;
+                }
+            } catch (err) {
+                log(`GCS URL test failed (CORS or access issue): ${err.message}`, 'error');
+                log(`This usually means the bucket is not publicly accessible`, 'error');
+                return false;
+            }
         }
 
         function getApiUrl() {
@@ -172,6 +267,8 @@
             const title = document.getElementById('title').value;
             const caption = document.getElementById('caption').value;
             const originalBetLink = document.getElementById('originalBetLink').value;
+            const duration = parseInt(document.getElementById('duration').value) || 8;
+            const sourceImageUrl = document.getElementById('sourceImageUrl').value.trim() || null;
 
             submitBtn.disabled = true;
             stopBtn.disabled = false;
@@ -179,8 +276,27 @@
             statusDiv.className = '';
             videoContainer.style.display = 'none';
 
+            // Reset images
+            imagesContainer.style.display = 'block';
+            image1.style.display = 'none';
+            image1Placeholder.style.display = 'flex';
+            image1Placeholder.textContent = 'Generating...';
+            image2.style.display = 'none';
+            image2Placeholder.style.display = 'flex';
+            image2Placeholder.textContent = 'Waiting...';
+            image1Loaded = false;
+            image2Loaded = false;
+            pollCount = 0;
+
+            log('========== NEW JOB SUBMISSION ==========', 'info');
+            log(`API URL: ${getApiUrl()}`, 'info');
+            log(`Title: ${title}`, 'info');
+            log(`Caption: ${caption.substring(0, 50)}...`, 'info');
+            log(`Bet Link: ${originalBetLink}`, 'info');
+
             try {
-                log('Creating job...', 'info');
+                log('Sending POST to /api/jobs/create...', 'info');
+                const startTime = Date.now();
 
                 const response = await fetch(`${getApiUrl()}/api/jobs/create`, {
                     method: 'POST',
@@ -188,27 +304,37 @@
                     body: JSON.stringify({
                         title,
                         caption,
-                        original_bet_link: originalBetLink
+                        original_bet_link: originalBetLink,
+                        duration_seconds: duration,
+                        source_image_url: sourceImageUrl
                     })
                 });
 
+                const elapsed = Date.now() - startTime;
+                log(`Response received in ${elapsed}ms, status: ${response.status}`, 'info');
+
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                    const errorText = await response.text();
+                    log(`Error response body: ${errorText}`, 'error');
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
                 }
 
                 const data = await response.json();
+                log(`Response data: ${JSON.stringify(data)}`, 'info');
                 const jobId = data.job_id;
 
                 jobIdSpan.textContent = jobId;
                 statusText.textContent = 'Pending';
-                log(`Job created: ${jobId}`, 'success');
+                log(`Job created successfully: ${jobId}`, 'success');
+                log('Starting status polling (every 3s)...', 'info');
 
                 // Start polling
                 pollInterval = setInterval(() => pollStatus(jobId), 3000);
                 pollStatus(jobId); // Initial poll
 
             } catch (err) {
-                log(`Error: ${err.message}`, 'error');
+                log(`Job creation failed: ${err.message}`, 'error');
+                log(`Stack: ${err.stack}`, 'error');
                 statusText.textContent = 'Error';
                 statusDiv.className = 'error';
                 submitBtn.disabled = false;
@@ -216,15 +342,54 @@
             }
         });
 
+        let pollCount = 0;
+
         async function pollStatus(jobId) {
+            pollCount++;
             try {
-                log('Polling status...');
+                log(`Polling status (attempt #${pollCount})...`);
 
                 const response = await fetch(`${getApiUrl()}/api/jobs/status/${jobId}`);
+                log(`Poll response status: ${response.status}`);
+
                 const data = await response.json();
+                log(`Poll response data: ${JSON.stringify(data).substring(0, 200)}...`);
 
                 statusText.textContent = data.status;
-                log(`Status: ${data.status}`);
+
+                // Display images as they become available
+                if (data.image1_url && !image1Loaded) {
+                    log(`Image 1 URL received: ${data.image1_url.substring(0, 80)}...`, 'success');
+                    image1.src = data.image1_url;
+                    image1.onload = () => {
+                        log('Image 1 loaded successfully!', 'success');
+                        image1.style.display = 'block';
+                        image1Placeholder.style.display = 'none';
+                    };
+                    image1.onerror = (e) => {
+                        log(`Image 1 failed to load: ${e}`, 'error');
+                        image1Placeholder.textContent = 'Failed to load';
+                        image1Placeholder.style.color = '#ff4757';
+                    };
+                    image1Loaded = true;
+                    image2Placeholder.textContent = 'Generating...';
+                }
+
+                if (data.image2_url && !image2Loaded) {
+                    log(`Image 2 URL received: ${data.image2_url.substring(0, 80)}...`, 'success');
+                    image2.src = data.image2_url;
+                    image2.onload = () => {
+                        log('Image 2 loaded successfully!', 'success');
+                        image2.style.display = 'block';
+                        image2Placeholder.style.display = 'none';
+                    };
+                    image2.onerror = (e) => {
+                        log(`Image 2 failed to load: ${e}`, 'error');
+                        image2Placeholder.textContent = 'Failed to load';
+                        image2Placeholder.style.color = '#ff4757';
+                    };
+                    image2Loaded = true;
+                }
 
                 if (data.status === 'done') {
                     clearInterval(pollInterval);
@@ -232,22 +397,47 @@
                     submitBtn.disabled = false;
                     stopBtn.disabled = true;
 
-                    log(`Video ready: ${data.video_url}`, 'success');
+                    log('========== JOB COMPLETE ==========', 'success');
+                    log(`Video URL from API: ${data.video_url}`, 'success');
+                    log(`Original bet link: ${data.original_bet_link}`, 'info');
 
                     if (data.video_url) {
+                        log('Testing video URL accessibility...', 'info');
+
+                        // Test if the URL is accessible
+                        await testGcsUrl(data.video_url);
+
+                        log('Setting video player source...', 'info');
                         videoPlayer.src = data.video_url;
                         videoContainer.style.display = 'block';
+
+                        // Add error handler to video element
+                        videoPlayer.onerror = (e) => {
+                            log(`Video player error: ${videoPlayer.error?.message || 'Unknown error'}`, 'error');
+                            log(`Video error code: ${videoPlayer.error?.code}`, 'error');
+                            log('Possible causes: bucket not public, CORS issues, or file does not exist', 'error');
+                        };
+
+                        videoPlayer.onloadstart = () => log('Video load started...', 'info');
+                        videoPlayer.onloadeddata = () => log('Video data loaded successfully!', 'success');
+                        videoPlayer.oncanplay = () => log('Video can play!', 'success');
+                    } else {
+                        log('WARNING: Job done but no video_url returned!', 'error');
                     }
                 } else if (data.status === 'error') {
                     clearInterval(pollInterval);
                     statusDiv.className = 'error';
                     submitBtn.disabled = false;
                     stopBtn.disabled = true;
-                    log(`Error: ${data.error}`, 'error');
+                    log('========== JOB FAILED ==========', 'error');
+                    log(`Error message: ${data.error}`, 'error');
+                } else if (data.status === 'waiting') {
+                    log(`Still waiting... (poll #${pollCount})`);
                 }
 
             } catch (err) {
                 log(`Poll error: ${err.message}`, 'error');
+                log(`Poll error stack: ${err.stack}`, 'error');
             }
         }
 

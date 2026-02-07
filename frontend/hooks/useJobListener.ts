@@ -17,7 +17,7 @@ interface UseJobListenerOptions {
 export function useJobListener({
   apiUrl,
   jobId,
-  pollMs = 3000,
+  pollMs = 5000,
   onStatus,
 }: UseJobListenerOptions) {
   const stoppedRef = useRef(false)
