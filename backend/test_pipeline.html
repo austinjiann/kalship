@@ -145,7 +145,7 @@
             <textarea
                 id="caption"
                 required
-            >The Seattle Seahawks score the winning touchdown as the crowd goes wild, confetti falls from the sky in celebration</textarea>
+            >who will win super bowl lx? #nfl #superbowl</textarea>
         </div>
 
         <div class="form-group">
@@ -153,7 +153,7 @@
             <input
                 type="url"
                 id="originalBetLink"
-                value="https://kalshi.com/markets/nfl/super-bowl-winner"
+                value="https://kalshi.com/markets/kxsb/super-bowl/kxsb-26"
                 required
             >
         </div>
@@ -170,12 +170,26 @@
         </div>
 
         <div class="form-group">
-            <label for="sourceImageUrl">Source Image URL (optional - use real image as base)</label>
+            <label for="sourceImageUrl">Source Image URL (optional - main image to use as base)</label>
             <input
                 type="url"
                 id="sourceImageUrl"
-                value="https://www.google.com/search?sca_esv=f20a71d25da966d7&sxsrf=ANbL-n5r4cKieqh_MaUshEXQh6NiKrl63A:1770463954770&udm=2&fbs=ADc_l-aN0CWEZBOHjofHoaMMDiKpaEWjvZ2Py1XXV8d8KvlI3jljrY5CkLlk8Dq3IvwBz-Qg9gdZYJriKd9fBMKKfwqZ_e3FddxbRXrqCdfw8KnLTbXcg0h9K3_uiKnYbCekiPkg8u88d2nMyC5a8WrzUQvLhj54JoFpffhFxHaUjXaLxHS4vlfa_7aR-U3oqOf7cZ-c0C9hYVMEJh5HDCFhqq_kSugVpQ&q=seahawks+action&sa=X&ved=2ahUKEwiYk_KYpMeSAxV_m4kEHetPC4cQtKgLegQICRAB&biw=1492&bih=924&dpr=2#sv=CAMSVhoyKhBlLVltM3RCdHh2a0lEQ2hNMg5ZbTN0QnR4dmtJRENoTToOOFZVZ0c1V1pja1Eza00gBCocCgZtb3NhaWMSEGUtWW0zdEJ0eHZrSURDaE0YADABGAcg6N3nvQcwAkoIEAIYAiACKAI"
+                placeholder="https://example.com/image.jpg"
+                value="https://seahawkswire.usatoday.com/gcdn/authoring/images/smg/2025/02/26/SSEA/80639341007-61-34639.jpeg?width=660&height=505&fit=crop&format=pjpg&auto=webp"
             >
+        </div>
+
+        <div class="form-group">
+            <label for="referenceImageUrls">Reference Image URLs (optional - for uniforms, players, style)</label>
+            <textarea
+                id="referenceImageUrls"
+                placeholder="https://i.imgur.com/example1.jpg
+https://pbs.twimg.com/media/example2.png"
+                value="https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/4430878.png&w=350&h=254
+https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png"
+                style="min-height: 60px;"
+            ></textarea>
+            <small style="color: #666;">Direct image URLs only (.jpg, .png) - one per line. Right-click an image → "Copy image address"</small>
         </div>
 
         <button type="submit" id="submitBtn">Start Job</button>
@@ -262,6 +276,12 @@
             const duration = parseInt(document.getElementById('duration').value) || 8;
             const sourceImageUrl = document.getElementById('sourceImageUrl').value.trim() || null;
 
+            // Parse reference image URLs (supports comma or newline separated)
+            const refUrlsRaw = document.getElementById('referenceImageUrls').value.trim();
+            const referenceImageUrls = refUrlsRaw
+                ? refUrlsRaw.split(/[,\n]/).map(u => u.trim()).filter(u => u)
+                : [];
+
             submitBtn.disabled = true;
             stopBtn.disabled = false;
             statusDiv.style.display = 'block';
@@ -281,6 +301,9 @@
             log(`Title: ${title}`, 'info');
             log(`Caption: ${caption.substring(0, 50)}...`, 'info');
             log(`Bet Link: ${originalBetLink}`, 'info');
+            if (referenceImageUrls.length > 0) {
+                log(`Reference images: ${referenceImageUrls.length} URL(s)`, 'info');
+            }
 
             try {
                 log('Sending POST to /api/jobs/create...', 'info');
@@ -294,7 +317,8 @@
                         caption,
                         original_bet_link: originalBetLink,
                         duration_seconds: duration,
-                        source_image_url: sourceImageUrl
+                        source_image_url: sourceImageUrl,
+                        reference_image_urls: referenceImageUrls
                     })
                 });
 

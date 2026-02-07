@@ -19,6 +19,11 @@ class Jobs(APIController):
         self.job_service = job_service
 
     def _coerce_payload(self, payload: dict) -> dict:
+        # Handle reference_image_urls - can be list or comma-separated string
+        ref_urls = payload.get("reference_image_urls") or payload.get("referenceImageUrls") or []
+        if isinstance(ref_urls, str):
+            ref_urls = [u.strip() for u in ref_urls.split(",") if u.strip()]
+
         return {
             "title": payload.get("title"),
             "caption": payload.get("caption"),
@@ -31,6 +36,7 @@ class Jobs(APIController):
             ),
             "duration_seconds": payload.get("duration_seconds", 8),
             "source_image_url": payload.get("source_image_url") or payload.get("sourceImageUrl"),
+            "reference_image_urls": ref_urls,
         }
 
     @post("/create")
@@ -87,6 +93,7 @@ class Jobs(APIController):
             duration_seconds = 6
 
         source_image_url = (payload.get("source_image_url") or "").strip() or None
+        reference_image_urls = [u for u in payload.get("reference_image_urls", []) if u]
 
         job_request = VideoJobRequest(
             title=title,
@@ -94,6 +101,7 @@ class Jobs(APIController):
             original_bet_link=original_bet_link,
             duration_seconds=max(5, min(duration_seconds, 8)),  # Veo supports 5-8 seconds
             source_image_url=source_image_url,
+            reference_image_urls=reference_image_urls,
         )
 
         log_api("/create", f"Creating video job (duration={job_request.duration_seconds}s)...")

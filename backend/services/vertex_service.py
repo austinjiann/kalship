@@ -25,8 +25,18 @@ class VertexService:
         self.bucket_name = settings.GOOGLE_CLOUD_BUCKET_NAME
         logger.info(f"VertexService initialized, output bucket: {self.bucket_name}")
 
-    async def generate_video_content(self, prompt: str, image_data: bytes, duration_seconds: int = 8) -> GenerateVideosOperation:
+    async def generate_video_content(
+        self,
+        prompt: str,
+        image_data: bytes,
+        duration_seconds: int = 8,
+        reference_images: list[bytes] | None = None,
+    ) -> GenerateVideosOperation:
         output_gcs_uri = f"gs://{self.bucket_name}/videos/"
+
+        # Veo only supports single image - Gemini handles the compositing
+        logger.info(f"Calling Veo with 1 input image ({len(image_data)} bytes)")
+
         operation = self.client.models.generate_videos(
             model="veo-3.1-fast-generate-001",
             prompt=prompt,
@@ -47,33 +57,58 @@ class VertexService:
         self,
         prompt: str,
         image: bytes | None = None,
+        reference_images: list[bytes] | None = None,
     ) -> bytes:
         if not prompt:
             raise ValueError("prompt is required")
 
+        contents = []
+
+        # Add source image first if provided
         if image:
-            # Image-to-image - this is 8-10 seconds LATER in the action
-            enhanced_prompt = f"""{prompt}
+            logger.info(f"Adding source image ({len(image)} bytes) to Gemini request")
+            contents.append(Part.from_bytes(data=image, mime_type="image/png"))
 
-This is 10 SECONDS LATER. Show what happens AFTER the action:
-- Same subject but COMPLETELY DIFFERENT moment
-- If someone was running, show them celebrating
-- If something was building up, show the explosion/climax
-- Different camera angle, different pose, different energy
-- This is the RESULT of the action, not the action itself"""
-            contents = [
-                Part.from_bytes(data=image, mime_type="image/png"),
-                enhanced_prompt,
-            ]
+        # Add reference images for additional context
+        if reference_images:
+            logger.info(f"Adding {len(reference_images)} reference image(s) to Gemini request")
+            for i, ref_img in enumerate(reference_images):
+                logger.info(f"  Reference image {i+1}: {len(ref_img)} bytes")
+                contents.append(Part.from_bytes(data=ref_img, mime_type="image/png"))
         else:
-            # Text-to-image - the opening action shot
+            logger.info("No reference images provided to Gemini")
+
+        # Build the prompt based on what images we have
+        if image and reference_images:
+            # Source image + reference headshots
             enhanced_prompt = f"""{prompt}
 
-Create the opening action shot - the moment BEFORE the climax:
-- High energy, mid-action
-- Something is about to happen
-- Photorealistic sports/news photography style"""
-            contents = [enhanced_prompt]
+IMAGE USAGE INSTRUCTIONS:
+- IMAGE 1 (first image): This is an ACTION REFERENCE. Use this for the pose, composition, energy, and athletic movement. Recreate this dynamic action.
+- IMAGES 2+: These are PLAYER HEADSHOTS. Use these faces EXACTLY on the players in your generated image. The faces must match these references.
+- Copy the exact uniform colors, helmet design, and team branding from the action image.
+
+CRITICAL: The player faces MUST match the headshot references provided."""
+        elif image:
+            # Just source image, no headshots
+            enhanced_prompt = f"""{prompt}
+
+Use the provided action image as reference for:
+- Athletic pose and composition
+- Uniform colors and team branding
+- Energy and movement style
+- Stadium atmosphere
+
+Recreate this action with 4K cinematic quality."""
+        elif reference_images:
+            # Just headshots, no action reference
+            enhanced_prompt = f"""{prompt}
+
+The provided images are PLAYER HEADSHOTS. Use these faces EXACTLY on the players you generate. The faces must match these references precisely."""
+        else:
+            enhanced_prompt = prompt
+
+        contents.append(enhanced_prompt)
 
         response = self.client.models.generate_content(
             model="gemini-2.5-flash-image",
