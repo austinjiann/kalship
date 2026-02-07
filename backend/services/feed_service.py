@@ -142,6 +142,96 @@ class FeedService:
                     return data["event_metadata"]
                 return data
 
+    async def _resolve_market_image(
+        self, event_ticker: str, market_ticker: str, event: dict | None = None
+    ) -> str:
+        """Resolve the best available image URL for a market."""
+        if not event_ticker:
+            return ""
+
+        event_metadata = {}
+        try:
+            event_metadata = await self._get_event_metadata(event_ticker)
+            print(f"[image] Event metadata for {event_ticker}: {event_metadata}")
+        except Exception as e:
+            print(f"[image] Failed to get metadata for {event_ticker}: {e}")
+            return ""
+
+        def to_full_url(path: str) -> str:
+            if not path:
+                return ""
+            if path.startswith("/"):
+                return f"https://kalshi.com{path}"
+            return path
+
+        def is_fallback(url: str) -> bool:
+            return "structured_icons/" in url
+
+        best_fallback = ""
+
+        # 1. Series-level image (the event page image: trophy, logo, etc.)
+        img = to_full_url(event_metadata.get("image_url", ""))
+        if img and not is_fallback(img):
+            return img
+        if img and not best_fallback:
+            best_fallback = img
+
+        # 2. Market-specific image (exact ticker match), skip fallback icons
+        first_non_fallback_market_image = ""
+        for md in event_metadata.get("market_details", []):
+            img = to_full_url(md.get("image_url", ""))
+            if not img:
+                continue
+            if is_fallback(img):
+                if not best_fallback:
+                    best_fallback = img
+                continue
+            if not first_non_fallback_market_image:
+                first_non_fallback_market_image = img
+            if md.get("market_ticker") == market_ticker:
+                return img
+
+        # 3. Featured image
+        img = to_full_url(event_metadata.get("featured_image_url", ""))
+        if img and not is_fallback(img):
+            return img
+        if img and not best_fallback:
+            best_fallback = img
+
+        # 4. First non-fallback market_details image
+        if first_non_fallback_market_image:
+            return first_non_fallback_market_image
+
+        # 5. Event object fallback
+        if event:
+            img = to_full_url(event.get("image_url", ""))
+            if img and not is_fallback(img):
+                return img
+            if img and not best_fallback:
+                best_fallback = img
+
+        # 6. Last resort: use the fallback icon (better than nothing)
+        return best_fallback
+
+    async def _get_channel_thumbnail(self, channel_id: str) -> str:
+        url = "https://www.googleapis.com/youtube/v3/channels"
+        params = {"part": "snippet", "id": channel_id, "key": self.youtube_api_key}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+            items = data.get("items", [])
+            if items:
+                thumbnails = items[0].get("snippet", {}).get("thumbnails", {})
+                return (
+                    thumbnails.get("default", {}).get("url", "")
+                    or thumbnails.get("medium", {}).get("url", "")
+                )
+        except Exception as e:
+            print(f"[channel_thumbnail] Failed to fetch for {channel_id}: {e}")
+        return ""
+
     async def get_video_metadata(self, video_id: str) -> dict:
         url = "https://www.googleapis.com/youtube/v3/videos"
         params = {"part": "snippet", "id": video_id, "key": self.youtube_api_key}
@@ -151,9 +241,14 @@ class FeedService:
                 data = await response.json()
 
         if not data.get("items"):
-            return {"title": "", "description": "", "channel": "", "thumbnail": ""}
+            return {"title": "", "description": "", "channel": "", "thumbnail": "", "channel_thumbnail": ""}
 
         snippet = data["items"][0]["snippet"]
+        channel_id = snippet.get("channelId", "")
+        channel_thumbnail = ""
+        if channel_id:
+            channel_thumbnail = await self._get_channel_thumbnail(channel_id)
+
         return {
             "title": snippet.get("title", ""),
             "description": snippet.get("description", "")[:500],
@@ -162,6 +257,7 @@ class FeedService:
                 snippet.get("thumbnails", {}).get("maxres", {}).get("url")
                 or snippet.get("thumbnails", {}).get("high", {}).get("url", "")
             ),
+            "channel_thumbnail": channel_thumbnail,
         }
 
     async def _extract_keywords(self, title: str, description: str) -> list[str]:
@@ -282,23 +378,9 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
                         pass
                 print(f"[{video_id}] SUCCESS (series) - Market: {best_market.get('ticker')}")
                 formatted = await self._format_market_display(best_market, best_event, keywords)
-                event_metadata = {}
-                if event_ticker:
-                    try:
-                        event_metadata = await self._get_event_metadata(event_ticker)
-                        print(f"[{video_id}] Event metadata: {event_metadata}")
-                    except Exception as e:
-                        print(f"[{video_id}] Failed to get event metadata: {e}")
-                market_image = ""
-                market_details = event_metadata.get("market_details", [])
-                for md in market_details:
-                    if md.get("market_ticker") == best_market.get("ticker"):
-                        market_image = md.get("image_url", "")
-                        break
-                if not market_image:
-                    market_image = event_metadata.get("image_url", "") or event_metadata.get("featured_image_url", "")
-                if not market_image:
-                    market_image = f"https://kalshi.com/api-app/preview/{best_market.get('ticker')}?width=200&height=200"
+                market_image = await self._resolve_market_image(
+                    event_ticker, best_market.get("ticker", ""), best_event
+                )
                 print(f"[{video_id}] Market image: {market_image}")
                 return {
                     "youtube": {
@@ -306,6 +388,7 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
                         "title": metadata["title"],
                         "thumbnail": metadata["thumbnail"],
                         "channel": metadata["channel"],
+                        "channel_thumbnail": metadata.get("channel_thumbnail", ""),
                     },
                     "kalshi": {
                         "ticker": best_market.get("ticker"),
@@ -348,24 +431,10 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
         print(f"[{video_id}] SUCCESS (event) - Market: {best_market.get('ticker')}")
         formatted = await self._format_market_display(best_market, best_event, keywords)
 
-        event_metadata = {}
         event_ticker = best_event.get("event_ticker", "")
-        if event_ticker:
-            try:
-                event_metadata = await self._get_event_metadata(event_ticker)
-                print(f"[{video_id}] Event metadata: {event_metadata}")
-            except Exception as e:
-                print(f"[{video_id}] Failed to get event metadata: {e}")
-        market_image = ""
-        market_details = event_metadata.get("market_details", [])
-        for md in market_details:
-            if md.get("market_ticker") == best_market.get("ticker"):
-                market_image = md.get("image_url", "")
-                break
-        if not market_image:
-            market_image = event_metadata.get("image_url", "") or event_metadata.get("featured_image_url", "")
-        if not market_image:
-            market_image = f"https://kalshi.com/api-app/preview/{best_market.get('ticker')}?width=200&height=200"
+        market_image = await self._resolve_market_image(
+            event_ticker, best_market.get("ticker", ""), best_event
+        )
         print(f"[{video_id}] Market image: {market_image}")
 
         return {
@@ -374,6 +443,7 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
                 "title": metadata["title"],
                 "thumbnail": metadata["thumbnail"],
                 "channel": metadata["channel"],
+                "channel_thumbnail": metadata.get("channel_thumbnail", ""),
             },
             "kalshi": {
                 "ticker": best_market.get("ticker"),

@@ -89,7 +89,7 @@ body {
 }
 
 .app-background {
-  background: url('/bg.jpeg') center center / cover no-repeat;
+  background: #091a0f;
   position: relative;
 }
 
@@ -97,12 +97,38 @@ body {
   content: '';
   position: absolute;
   inset: 0;
-  background: 
-    radial-gradient(ellipse at 20% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(168, 85, 247, 0.15) 0%, transparent 50%),
-    radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.1) 0%, transparent 70%);
+  background:
+    radial-gradient(ellipse at 20% 20%, rgba(16, 185, 129, 0.15) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(94, 234, 212, 0.1) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, rgba(16, 185, 129, 0.08) 0%, transparent 70%);
   filter: blur(60px);
   pointer-events: none;
+}
+
+/* ── Dashboard background animations ── */
+@keyframes spotlight {
+  0% { opacity: 0; transform: translate(-72%, -62%) scale(0.5); }
+  100% { opacity: 1; transform: translate(-50%, -40%) scale(1); }
+}
+
+@keyframes spotlight-float {
+  0%, 100% { transform: translate(-50%, -40%) scale(1); }
+  50% { transform: translate(-48%, -42%) scale(1.05); }
+}
+
+@keyframes spotlight-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes dash-fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dash-fade-in {
+  opacity: 0;
+  animation: dash-fade-in 0.8s ease-out forwards;
 }
 
 .glass-card {
@@ -149,6 +175,44 @@ body {
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+.glass-btn-yes,
+.glass-btn-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1.5px solid;
+  background: rgba(255, 255, 255, 0.05);
+  font-weight: normal;
+  cursor: pointer;
+  transition: background 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.glass-btn-yes {
+  border-color: rgba(34, 197, 94, 0.6);
+  color: #4ade80;
+}
+
+.glass-btn-no {
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #f87171;
+}
+
+.glass-btn-yes:hover {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: rgba(34, 197, 94, 0.8);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.3), inset 0 0 8px rgba(34, 197, 94, 0.1);
+}
+
+.glass-btn-no:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.7);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.3), inset 0 0 8px rgba(239, 68, 68, 0.1);
+}
+
 .feed-container {
   height: 100%;
   overflow-y: scroll;
@@ -192,6 +256,7 @@ body {
 
 
 
+
 .short-sidebar {
   position: absolute;
   right: 12px;
@@ -229,29 +294,57 @@ body {
 .short-info {
   position: absolute;
   left: 12px;
-  bottom: 40px;
+  right: 60px;
+  bottom: 16px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
   z-index: 10;
-  max-width: 200px;
+  pointer-events: none;
+}
+
+.short-info-channel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.channel-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+}
+
+.channel-avatar-fallback {
+  background: rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
 .channel-name {
   font-size: 14px;
   font-weight: 700;
   color: #fff;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
 }
 
 .video-title {
   font-size: 13px;
   color: #fff;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  line-height: 1.3;
 }
 
 .bet-card {
