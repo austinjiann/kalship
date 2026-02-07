@@ -1,10 +1,10 @@
 export interface KalshiMarket {
   ticker: string
-  title: string
+  question: string
+  outcome: string
   yes_price: number
   no_price: number
   volume?: number
-  category: 'sports' | 'news' | 'culture' | 'climate' | 'tech'
 }
 
 export interface YouTubeShort {
@@ -16,7 +16,7 @@ export interface YouTubeShort {
 
 export interface FeedItem {
   id: string
-  kalshi: KalshiMarket
+  kalshi?: KalshiMarket
   youtube: YouTubeShort
 }
 

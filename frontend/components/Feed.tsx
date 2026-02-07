@@ -23,7 +23,11 @@ export default forwardRef<FeedRef, FeedProps>(function Feed({ items, onCurrentIt
     const container = containerRef.current
     const itemHeight = container.clientHeight
     container.scrollTo({ top: index * itemHeight, behavior: 'smooth' })
-  }, [items.length])
+    setActiveIndex(index)
+    if (items[index]) {
+      onCurrentItemChange?.(items[index])
+    }
+  }, [items, onCurrentItemChange])
 
   useImperativeHandle(ref, () => ({
     scrollToNext: () => scrollToIndex(activeIndex + 1),
@@ -52,11 +56,14 @@ export default forwardRef<FeedRef, FeedProps>(function Feed({ items, onCurrentIt
     return () => container.removeEventListener('scroll', handleScroll)
   }, [handleScroll])
 
+  const initializedRef = useRef(false)
+
   useEffect(() => {
-    if (items.length > 0 && onCurrentItemChange) {
+    if (!initializedRef.current && items.length > 0 && onCurrentItemChange) {
       onCurrentItemChange(items[0])
+      initializedRef.current = true
     }
-  }, [])
+  }, [items, onCurrentItemChange])
 
   return (
     <div ref={containerRef} className="feed-container">

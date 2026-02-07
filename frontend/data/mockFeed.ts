@@ -1,26 +1,14 @@
 import { FeedItem } from '@/types'
 
-/*
-
-mock shorts for testing lol
-
-https://www.youtube.com/shorts/vHaPgrSMlI0
-https://www.youtube.com/shorts/HZOkwNsYFdo
-https://www.youtube.com/shorts/w1rbnM6A4AA
-https://www.youtube.com/shorts/_qW6a1A9gb0
-https://www.youtube.com/shorts/3fQhDJlRJYg
-https://www.youtube.com/shorts/LQ8uCvKYu3Y
-
-*/
 export const mockFeedItems: FeedItem[] = [
   {
     id: '1',
     kalshi: {
       ticker: 'KXBTC-150K-JUN',
-      title: 'Will Bitcoin hit $150,000 by June 2025?',
+      question: 'Bitcoin Price',
+      outcome: 'Will Bitcoin hit $150,000 by June 2025?',
       yes_price: 45,
       no_price: 55,
-      category: 'tech'
     },
     youtube: {
       video_id: 'vHaPgrSMlI0',
@@ -33,10 +21,10 @@ export const mockFeedItems: FeedItem[] = [
     id: '2',
     kalshi: {
       ticker: 'KXNFL-EAGLES-SB',
-      title: 'Will the Eagles repeat as Super Bowl champs?',
+      question: 'NFL Super Bowl',
+      outcome: 'Will the Eagles repeat as Super Bowl champs?',
       yes_price: 28,
       no_price: 72,
-      category: 'sports'
     },
     youtube: {
       video_id: 'HZOkwNsYFdo',
@@ -49,10 +37,10 @@ export const mockFeedItems: FeedItem[] = [
     id: '3',
     kalshi: {
       ticker: 'KXAI-GPT5-Q2',
-      title: 'Will GPT-5 be released by Q2 2025?',
+      question: 'AI Release',
+      outcome: 'Will GPT-5 be released by Q2 2025?',
       yes_price: 62,
       no_price: 38,
-      category: 'tech'
     },
     youtube: {
       video_id: 'w1rbnM6A4AA',
@@ -65,10 +53,10 @@ export const mockFeedItems: FeedItem[] = [
     id: '4',
     kalshi: {
       ticker: 'KXSPACE-STARSHIP',
-      title: 'Will Starship complete a Mars mission by 2026?',
+      question: 'SpaceX Mars',
+      outcome: 'Will Starship complete a Mars mission by 2026?',
       yes_price: 15,
       no_price: 85,
-      category: 'tech'
     },
     youtube: {
       video_id: '_qW6a1A9gb0',
@@ -81,10 +69,10 @@ export const mockFeedItems: FeedItem[] = [
     id: '5',
     kalshi: {
       ticker: 'KXCLIMATE-2025',
-      title: 'Will 2025 be the hottest year on record?',
+      question: 'Climate',
+      outcome: 'Will 2025 be the hottest year on record?',
       yes_price: 78,
       no_price: 22,
-      category: 'climate'
     },
     youtube: {
       video_id: '3fQhDJlRJYg',
@@ -97,10 +85,10 @@ export const mockFeedItems: FeedItem[] = [
     id: '6',
     kalshi: {
       ticker: 'KXNFL-CHIEFS-PO',
-      title: 'Will the Chiefs make the playoffs in 2025?',
+      question: 'NFL Playoffs',
+      outcome: 'Will the Chiefs make the playoffs in 2025?',
       yes_price: 82,
       no_price: 18,
-      category: 'sports'
     },
     youtube: {
       video_id: 'LQ8uCvKYu3Y',

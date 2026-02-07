@@ -12,7 +12,7 @@ export default function ShortCard({ item, isActive = false }: ShortCardProps) {
     <div className="short-card">
       <div className="video-container">
         <iframe
-          src={`https://www.youtube-nocookie.com/embed/${item.youtube.video_id}?autoplay=${isActive ? 1 : 0}&loop=1&mute=0&playlist=${item.youtube.video_id}&controls=0&modestbranding=1&playsinline=1&rel=0`}
+          src={`https://www.youtube-nocookie.com/embed/${item.youtube.video_id}?autoplay=${isActive ? 1 : 0}&loop=1&mute=1&playlist=${item.youtube.video_id}&controls=0&modestbranding=1&playsinline=1&rel=0`}
           title={item.youtube.title}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen

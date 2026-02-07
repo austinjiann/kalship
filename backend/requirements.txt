@@ -9,3 +9,7 @@ pydantic-settings
 httpx
 yt-dlp
 asyncpg
+openai
+cryptography
+Pillow
+aiohttp
