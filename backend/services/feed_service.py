@@ -130,6 +130,18 @@ class FeedService:
                 data = await response.json()
                 return data.get("event", {})
 
+    async def _get_event_metadata(self, event_ticker: str) -> dict:
+        path = f"/trade-api/v2/events/{event_ticker}/metadata"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{KALSHI_BASE_URL}/events/{event_ticker}/metadata",
+                headers=self._get_kalshi_headers("GET", path),
+            ) as response:
+                if response.status != 200:
+                    return {}
+                data = await response.json()
+                return data
+
     async def get_video_metadata(self, video_id: str) -> dict:
         url = "https://www.googleapis.com/youtube/v3/videos"
         params = {"part": "snippet", "id": video_id, "key": self.youtube_api_key}
@@ -290,6 +302,20 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
                         pass
                 print(f"[{video_id}] SUCCESS (series) - Market: {best_market.get('ticker')}")
                 formatted = await self._format_market_display(best_market, best_event, keywords)
+                event_metadata = {}
+                if event_ticker:
+                    try:
+                        event_metadata = await self._get_event_metadata(event_ticker)
+                    except Exception:
+                        pass
+                market_image = ""
+                market_details = event_metadata.get("market_details", [])
+                for md in market_details:
+                    if md.get("market_ticker") == best_market.get("ticker"):
+                        market_image = md.get("image_url", "")
+                        break
+                if not market_image:
+                    market_image = event_metadata.get("image_url", "") or event_metadata.get("featured_image_url", "")
                 result = {
                     "youtube": {
                         "video_id": video_id,
@@ -304,6 +330,7 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
                         "yes_price": best_market.get("yes_bid", 0),
                         "no_price": best_market.get("no_bid", 0),
                         "volume": best_market.get("volume", 0),
+                        "image_url": market_image,
                     },
                     "keywords": keywords,
                 }
@@ -338,6 +365,22 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
         print(f"[{video_id}] SUCCESS (event) - Market: {best_market.get('ticker')}")
         formatted = await self._format_market_display(best_market, best_event, keywords)
 
+        event_metadata = {}
+        event_ticker = best_event.get("event_ticker", "")
+        if event_ticker:
+            try:
+                event_metadata = await self._get_event_metadata(event_ticker)
+            except Exception:
+                pass
+        market_image = ""
+        market_details = event_metadata.get("market_details", [])
+        for md in market_details:
+            if md.get("market_ticker") == best_market.get("ticker"):
+                market_image = md.get("image_url", "")
+                break
+        if not market_image:
+            market_image = event_metadata.get("image_url", "") or event_metadata.get("featured_image_url", "")
+
         result = {
             "youtube": {
                 "video_id": video_id,
@@ -352,6 +395,7 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
                 "yes_price": best_market.get("yes_bid", 0),
                 "no_price": best_market.get("no_bid", 0),
                 "volume": best_market.get("volume", 0),
+                "image_url": market_image,
             },
             "keywords": keywords,
         }

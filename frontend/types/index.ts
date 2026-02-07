@@ -5,6 +5,7 @@ export interface KalshiMarket {
   yes_price: number
   no_price: number
   volume?: number
+  image_url?: string
 }
 
 export interface YouTubeShort {
