@@ -13,7 +13,6 @@ logger = logging.getLogger("jobs_controller")
 def log_api(endpoint: str, msg: str):
     print(f"[{datetime.now().isoformat()}] [API] {endpoint}: {msg}", flush=True)
 
-
 class Jobs(APIController):
     def __init__(self, job_service: JobService):
         self.job_service = job_service
@@ -106,7 +105,7 @@ class Jobs(APIController):
             title=title,
             outcome=outcome,
             original_bet_link=original_bet_link,
-            duration_seconds=max(5, min(duration_seconds, 8)),  # Veo supports 5-8 seconds
+            duration_seconds=max(5, min(duration_seconds, 8)),
             source_image_url=source_image_url,
             reference_image_urls=reference_image_urls,
         )
@@ -116,31 +115,6 @@ class Jobs(APIController):
         log_api("/create", f"Job created: {job_id}")
         log_api("/create", "Job queued to worker - pipeline starting in background")
         return json({"job_id": job_id})
-
-    @get("/debug")
-    async def debug_info(self) -> Response:
-        """Debug endpoint to check worker status."""
-        worker_task = self.job_service.local_worker_task
-        worker_status = "not_started"
-        if worker_task:
-            if worker_task.done():
-                try:
-                    worker_task.result()
-                    worker_status = "completed"
-                except Exception as e:
-                    worker_status = f"crashed: {e}"
-            else:
-                worker_status = "running"
-
-        info = {
-            "cloud_tasks_enabled": self.job_service.cloud_tasks is not None,
-            "local_worker_status": worker_status,
-            "queue_size": self.job_service.local_queue.qsize(),
-            "jobs_in_memory": len(self.job_service.jobs),
-            "bucket_configured": self.job_service.bucket is not None,
-        }
-        log_api("/debug", f"Debug info: {info}")
-        return json(info)
 
     @get("/status/{job_id}")
     async def get_status(self, job_id: str) -> Response:

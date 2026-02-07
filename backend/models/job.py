@@ -2,7 +2,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Literal
 
-
 @dataclass
 class VideoJobRequest:
     """Request to create a video job"""
@@ -21,7 +20,7 @@ class WorkerJobPayload:
     title: str
     outcome: str
     original_bet_link: str
-    duration_seconds: int = 6
+    duration_seconds: int = 8
 
 
 @dataclass

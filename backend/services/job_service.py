@@ -34,7 +34,6 @@ class JobService:
     def __init__(self, vertex_service: VertexService):
         logger.info("Initializing JobService...")
         self.vertex_service = vertex_service
-        self.jobs: dict[str, dict] = {}
 
         self.local_queue: asyncio.Queue[dict] = asyncio.Queue()
         self.local_worker_task: asyncio.Task | None = None
@@ -63,9 +62,6 @@ class JobService:
         else:
             logger.warning("GOOGLE_CLOUD_BUCKET_NAME not set - job persistence disabled")
 
-    def _job_blob_path(self, job_id: str) -> str:
-        return f"jobs/{job_id}.json"
-
     def _image_blob_path(self, job_id: str, image_num: int) -> str:
         return f"images/{job_id}/image{image_num}.png"
 
@@ -85,7 +81,7 @@ class JobService:
         logger.info(f"[{job_id}] Image {image_num} uploaded: {gs_uri}")
         return gs_uri
 
-    def _generate_signed_url(self, gs_uri: str, expiration_hours: int = 24) -> Optional[str]:
+    def _generate_signed_url(self, gs_uri: str) -> Optional[str]:
         """Generate a URL for a GCS object. Uses public URL (bucket must be public)."""
         if not gs_uri or not gs_uri.startswith("gs://"):
             return None
@@ -96,29 +92,12 @@ class JobService:
         logger.info(f"_generate_signed_url: Using public URL: {public_url}")
         return public_url
 
-    def _parse_timestamp(self, value: Optional[str]) -> Optional[datetime]:
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(value)
-        except Exception:
-            return None
-
-    def _to_public_url(self, value: Optional[str]) -> Optional[str]:
-        if not value:
-            return None
-        if value.startswith("gs://"):
-            public_url = f"https://storage.googleapis.com/{value[len('gs://'):]}"
-            logger.debug(f"_to_public_url: {value} -> {public_url}")
-            return public_url
-        return value
-
     def _download_job_sync(self, job_id: str) -> Optional[dict]:
         if not self.bucket or not self.storage_client:
             logger.debug(f"_download_job_sync: no bucket/client for job {job_id}")
             return None
 
-        blob_path = self._job_blob_path(job_id)
+        blob_path = f"jobs/{job_id}.json"
         logger.debug(f"_download_job_sync: checking blob {blob_path}")
         blob = self.bucket.blob(blob_path)
         if not blob.exists(client=self.storage_client):
@@ -135,7 +114,7 @@ class JobService:
         if not self.bucket:
             logger.debug(f"_upload_job_sync: no bucket configured for job {job_id}")
             return
-        blob_path = self._job_blob_path(job_id)
+        blob_path = f"jobs/{job_id}.json"
         logger.info(f"_upload_job_sync: uploading job {job_id} to {blob_path}, status={data.get('status')}")
         blob = self.bucket.blob(blob_path)
         blob.upload_from_string(
@@ -145,30 +124,21 @@ class JobService:
         logger.debug(f"_upload_job_sync: upload complete for job {job_id}")
 
     async def _save_job(self, job_id: str, data: dict):
-        self.jobs[job_id] = data
         if self.bucket:
             try:
                 await asyncio.to_thread(self._upload_job_sync, job_id, data)
             except Exception as exc:
                 print(f"Failed to persist job {job_id} to bucket: {exc}")
 
-    async def _load_job(self, job_id: str, prefer_remote: bool = False) -> Optional[dict]:
-        job = self.jobs.get(job_id)
-        if job and not prefer_remote:
-            return job
+    async def _load_job(self, job_id: str) -> Optional[dict]:
+        if not self.bucket or not self.storage_client:
+            return None
 
-        if self.bucket:
-            try:
-                remote_job = await asyncio.to_thread(self._download_job_sync, job_id)
-            except Exception as exc:
-                print(f"Failed to read job {job_id} from bucket: {exc}")
-                return job
-
-            if remote_job:
-                self.jobs[job_id] = remote_job
-                return remote_job
-
-        return job
+        try:
+            return await asyncio.to_thread(self._download_job_sync, job_id)
+        except Exception as exc:
+            logger.error(f"Failed to load job {job_id} from GCS: {exc}")
+            return None
 
     async def _ensure_local_worker(self):
         if self.cloud_tasks:
@@ -192,7 +162,6 @@ class JobService:
                 self.local_queue.task_done()
 
     async def create_video_job(self, request: VideoJobRequest) -> str:
-        """Create a video job."""
         job_id = str(uuid.uuid4())
 
         await self._save_job(
@@ -315,24 +284,25 @@ class JobService:
                 "duration_seconds": int(job_data.get("duration_seconds", 8)),
             })
 
-    def _get_image_signed_url(self, job: dict) -> Optional[str]:
-        """Generate signed URL for the start frame image."""
-        image_uri = job.get("image_uri")
-        if image_uri:
-            return self._generate_signed_url(image_uri)
-        return None
-
     async def get_job_status(self, job_id: str) -> Optional[JobStatus]:
         """Poll job status."""
-        job = await self._load_job(job_id, prefer_remote=bool(self.bucket))
+        job = await self._load_job(job_id)
         if job is None:
             return None
 
         status = job.get("status")
-        job_start_time = self._parse_timestamp(job.get("job_start_time"))
-        job_end_time = self._parse_timestamp(job.get("job_end_time"))
+        job_start_time = (
+            datetime.fromisoformat(job["job_start_time"])
+            if job.get("job_start_time")
+            else None
+        )
+        job_end_time = (
+            datetime.fromisoformat(job["job_end_time"])
+            if job.get("job_end_time")
+            else None
+        )
         original_bet_link = job.get("original_bet_link")
-        image_url = self._get_image_signed_url(job)
+        image_url = job.get("image_uri")
 
         if status in ("pending", "queued"):
             return JobStatus(status="waiting", job_start_time=job_start_time, original_bet_link=original_bet_link, image_url=image_url)
@@ -358,7 +328,7 @@ class JobService:
                 job["job_end_time"] = datetime.now().isoformat()
                 await self._save_job(job_id, job)
                 print(f"[{job_id[:8]}] Video complete", flush=True)
-                return JobStatus(status="done", job_start_time=job_start_time, job_end_time=self._parse_timestamp(job["job_end_time"]), video_url=video_url, original_bet_link=original_bet_link, image_url=image_url)
+                return JobStatus(status="done", job_start_time=job_start_time, job_end_time=job_end_time, video_url=video_url, original_bet_link=original_bet_link, image_url=image_url)
             if result.status == "error":
                 job["status"] = "error"
                 job["error"] = result.error
