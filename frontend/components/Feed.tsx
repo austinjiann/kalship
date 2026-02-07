@@ -50,14 +50,11 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
   }, [])
 
   const scrollTo = useCallback((index: number) => {
-    console.log('[Feed] scrollTo called', { index, itemsLength: itemsRef.current.length })
     if (!containerRef.current || index < 0 || index >= itemsRef.current.length) {
-      console.log('[Feed] scrollTo aborted')
       return
     }
     const container = containerRef.current
     const itemHeight = container.clientHeight
-    console.log('[Feed] scrollTo executing', { itemHeight, targetTop: index * itemHeight })
     container.scrollTo({ top: index * itemHeight, behavior: 'smooth' })
     setActiveItem(index)
   }, [setActiveItem])
@@ -77,7 +74,6 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
       const currentIndex = Math.round(scrollTop / itemHeight)
 
       if (currentIndex !== activeIndexRef.current && itemsRef.current[currentIndex]) {
-        console.log('[Feed] scroll index changed', { from: activeIndexRef.current, to: currentIndex })
         setActiveItem(currentIndex)
       }
     }
@@ -99,8 +95,6 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
     onCurrentItemChangeRef.current?.(activeItem)
   }, [items, safeActiveIndex])
 
-  console.log('[Feed] render', { itemsLength: items.length })
-
   return (
     <div ref={containerRef} className="feed-container">
       {items.map((item, index) => (
@@ -108,6 +102,7 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
           key={item.youtube.video_id}
           item={item}
           isActive={index === safeActiveIndex}
+          shouldRender={Math.abs(index - safeActiveIndex) <= 1}
         />
       ))}
     </div>

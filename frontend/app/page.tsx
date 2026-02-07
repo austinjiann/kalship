@@ -2,53 +2,125 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
+import dynamic from 'next/dynamic'
+import { motion, AnimatePresence } from 'framer-motion'
 import { Iphone } from '@/components/ui/iphone'
 import Feed, { FeedRef } from '@/components/Feed'
 import { KalshiMarket } from '@/types'
 import { useVideoQueue } from '@/hooks/useVideoQueue'
-const BgWrapper = ({ children, className = '' }: { children: ReactNode, className?: string }) => (
-  <div className={`relative min-h-screen overflow-hidden ${className}`} style={{ backgroundColor: '#1a2520' }}>
-    {/* Background image layer — light blur for cartoony texture */}
+
+const CharacterPreview = dynamic(() => import('@/components/CharacterPreview'), { ssr: false })
+
+const TIPS = [
+  { text: 'Welcome to my office!', animation: 'wave' as const },
+  { text: "Today we're gonna scroll and bet on Kalshi.", animation: 'idle' as const },
+  { text: 'Scroll through shorts right here.', animation: 'point' as const },
+  { text: 'Tap YES or NO to place your bet.', animation: 'point' as const },
+  { text: "Let's go!", animation: 'wave' as const },
+]
+
+const FEED_TIP = 'Swipe up for the next short'
+
+const easeCubic = [0.22, 1, 0.36, 1] as const
+
+const BgWrapper = ({ children, blurred = true }: { children: ReactNode; blurred?: boolean }) => (
+  <div className="relative min-h-screen overflow-hidden">
+    {/* Background layer — blur controlled by prop with CSS transition */}
     <div
+      className="absolute inset-0"
       style={{
-        position: 'absolute',
-        inset: 0,
-        backgroundImage: "url('/bg.png')",
+        backgroundImage: 'url(/office-bg.jpeg)',
         backgroundSize: 'cover',
         backgroundPosition: 'center',
         backgroundRepeat: 'no-repeat',
-        filter: 'blur(2px)',
-        opacity: 0.7,
-        transform: 'scale(1.02)',
+        filter: blurred ? 'blur(6px)' : 'blur(0px)',
+        transform: blurred ? 'scale(1.08)' : 'scale(1.02)',
+        transition: 'filter 1s ease, transform 1s ease',
       }}
     />
-    {/* Light overlay to soften slightly */}
+    {/* Extra blur overlay for blurred state */}
     <div
+      className="absolute inset-0"
       style={{
-        position: 'absolute',
-        inset: 0,
-        background: 'radial-gradient(ellipse at 50% 40%, rgba(16,185,129,0.05) 0%, transparent 70%)',
-        pointerEvents: 'none',
+        backgroundImage: 'url(/office-bg.jpeg)',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        filter: 'blur(6px)',
+        transform: 'scale(1.08)',
+        opacity: blurred ? 1 : 0,
+        transition: 'opacity 1s ease',
+        maskImage: 'radial-gradient(ellipse 50% 50% at center, transparent 0%, black 70%)',
+        WebkitMaskImage: 'radial-gradient(ellipse 50% 50% at center, transparent 0%, black 70%)',
       }}
     />
-    {/* Content */}
-    <div className={`relative z-10 h-screen flex items-center justify-center ${className}`}>
+    <div className="relative z-10 h-screen flex items-center justify-center">
       {children}
     </div>
   </div>
 )
 
+function SpeechBubble({ text }: { text: string }) {
+  return (
+    <div
+      className="relative bg-white/95 text-gray-900 rounded-2xl px-5 py-3 max-w-[280px] text-sm font-medium shadow-lg"
+    >
+      {text}
+      {/* Triangle pointer at bottom-center */}
+      <div
+        className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-0 h-0"
+        style={{
+          borderLeft: '8px solid transparent',
+          borderRight: '8px solid transparent',
+          borderTop: '8px solid rgba(255,255,255,0.95)',
+        }}
+      />
+    </div>
+  )
+}
+
 export default function Home() {
   const { feedItems, stats, isProcessing, processQueue } = useVideoQueue()
   const [currentMarket, setCurrentMarket] = useState<KalshiMarket | undefined>(undefined)
   const [imgError, setImgError] = useState(false)
+  const [stage, setStage] = useState(0) // 0-4 = tutorial, 5 = feed
+  const [waitingForFeed, setWaitingForFeed] = useState(false)
   const feedRef = useRef<FeedRef>(null)
 
+  // Start processing immediately in background
   useEffect(() => {
     if (stats.pending > 0 && !isProcessing) {
       processQueue()
     }
   }, [stats.pending, isProcessing, processQueue])
+
+  // Spacebar to advance tutorial stages
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && stage < 5) {
+        e.preventDefault()
+        if (stage === 4) {
+          if (feedItems.length > 0) {
+            setStage(5)
+          } else {
+            setWaitingForFeed(true)
+          }
+        } else {
+          setStage(s => s + 1)
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [stage, feedItems.length])
+
+  // Auto-transition when feed becomes ready while waiting
+  useEffect(() => {
+    if (waitingForFeed && feedItems.length > 0) {
+      const t = setTimeout(() => setStage(5), 800)
+      return () => clearTimeout(t)
+    }
+  }, [waitingForFeed, feedItems.length])
 
   const handleBet = (side: 'YES' | 'NO') => {
     console.log(`Bet placed: ${side} on ${currentMarket?.ticker}`)
@@ -59,127 +131,238 @@ export default function Home() {
     setImgError(false)
   }, [])
 
-  const progress = stats.total > 0 ? ((stats.matched + stats.failed) / stats.total) * 100 : 0
+  const currentAnimation = waitingForFeed && stage === 4 ? 'idle' : (TIPS[stage]?.animation ?? 'idle')
+  const currentTipText = waitingForFeed && stage === 4 ? 'Hang tight...' : (TIPS[stage]?.text ?? '')
 
-  if (stats.total === 0) {
+  // rotationY per stage: point stages face toward phone, others centered
+  const currentRotationY = currentAnimation === 'point' ? 0.4 : 0.3
+
+  // --- FEED VIEW (stage 5) ---
+  if (stage === 5) {
     return (
-      <BgWrapper className="flex items-center justify-center">
-        <div className="text-white/80 text-xl font-medium">No videos in queue</div>
+      <BgWrapper blurred>
+        <motion.div
+          className="relative flex items-center justify-center max-h-screen w-full -mt-4 sm:-mt-6"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6 }}
+        >
+          {/* Character — left of phone */}
+          <div className="absolute right-[calc(50%+210px)] z-20">
+            <div className="flex flex-col items-center">
+              <div className="relative bg-white/95 text-gray-900 rounded-2xl px-4 py-2 max-w-[220px] text-xs font-medium shadow-lg">
+                {FEED_TIP}
+                <div
+                  className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-0 h-0"
+                  style={{
+                    borderLeft: '6px solid transparent',
+                    borderRight: '6px solid transparent',
+                    borderTop: '6px solid rgba(255,255,255,0.95)',
+                  }}
+                />
+              </div>
+              <CharacterPreview animation="idle" rotationY={0.8} />
+            </div>
+          </div>
+
+          <div className="relative flex-shrink-0" style={{ filter: 'drop-shadow(0 20px 60px rgba(0,0,0,0.5))' }}>
+            <Iphone className="w-[380px] max-h-screen" frameColor="#1a1a1a">
+              <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} />
+            </Iphone>
+          </div>
+
+          {currentMarket && (
+            <motion.div
+              className="absolute left-[calc(50%+210px)] w-[320px] rounded-2xl p-4"
+              initial={{ x: 40, opacity: 0, rotate: 2 }}
+              animate={{ x: 0, opacity: 1, rotate: 0 }}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+              style={{
+                background: 'rgba(30, 30, 30, 0.88)',
+                backdropFilter: 'blur(20px)',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+              }}
+            >
+              <div className="flex items-start gap-3 mb-3">
+                {currentMarket.image_url && !imgError ? (
+                  <img
+                    src={currentMarket.image_url}
+                    alt=""
+                    className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
+                    onError={() => setImgError(true)}
+                  />
+                ) : (
+                  <div
+                    className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ background: 'rgba(16, 185, 129, 0.2)' }}
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-emerald-400">
+                      <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
+                    </svg>
+                  </div>
+                )}
+                <p className="text-white/90 text-xs leading-snug flex-1 line-clamp-2 min-h-[2.5em]">
+                  {currentMarket.question}
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between text-xs">
+                <a
+                  href={`https://kalshi.com/events/${currentMarket.event_ticker || currentMarket.ticker}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1 text-white/50 hover:text-white transition-colors"
+                >
+                  View on Kalshi
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3">
+                    <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
+                  </svg>
+                </a>
+                <div className="flex gap-2">
+                  <button
+                    className="px-3 py-1 text-xs glass-btn-yes"
+                    onClick={() => handleBet('YES')}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    className="px-3 py-1 text-xs glass-btn-no"
+                    onClick={() => handleBet('NO')}
+                  >
+                    No
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </motion.div>
       </BgWrapper>
     )
   }
 
-  if (isProcessing || stats.pending > 0 || stats.processing > 0) {
-    return (
-      <BgWrapper className="flex items-center justify-center">
-        <div 
-          className="flex flex-col items-center gap-6 p-8 rounded-3xl min-w-[320px]"
-          style={{
-            background: 'rgba(255, 255, 255, 0.05)',
-            backdropFilter: 'blur(20px)',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.3)',
+  // --- TUTORIAL VIEW (stages 0-4) ---
+  return (
+    <BgWrapper blurred={stage >= 2}>
+      <div className="relative flex items-center justify-center max-h-screen w-full -mt-4 sm:-mt-6">
+        {/* Character + Speech Bubble */}
+        <motion.div
+          className="z-20"
+          animate={{
+            x: stage >= 2 ? -340 : 0,
           }}
+          transition={{ duration: 0.8, ease: easeCubic }}
+          style={{ position: stage >= 2 ? 'absolute' : 'relative' }}
         >
-          <div className="text-white text-xl font-medium">Processing Videos</div>
-          <div className="w-full rounded-full h-2 overflow-hidden" style={{ background: 'rgba(255,255,255,0.1)' }}>
-            <div 
-              className="h-full transition-all duration-300 ease-out"
-              style={{ 
-                width: `${progress}%`,
-                background: 'linear-gradient(to right, #6366f1, #a855f7)'
-              }}
+          <div className="relative flex flex-col items-center">
+            {/* Speech bubble — positioned near character's head */}
+            <div className="relative w-full flex justify-center mt-8">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={`tip-${stage}-${waitingForFeed}`}
+                  initial={{ opacity: 0, y: 10, rotate: -2 }}
+                  animate={{ opacity: 1, y: 0, rotate: 0 }}
+                  exit={{ opacity: 0, y: -8, rotate: 2 }}
+                  transition={{ duration: 0.35, ease: 'easeOut' }}
+                >
+                  <SpeechBubble text={currentTipText} />
+                </motion.div>
+              </AnimatePresence>
+            </div>
+            <CharacterPreview
+              animation={currentAnimation}
+              size={{ width: 500, height: 600 }}
+              rotationY={currentRotationY}
             />
           </div>
-          <div className="flex gap-4 text-sm text-white/50">
-            <span>{stats.matched} matched</span>
-            <span>{stats.processing} processing</span>
-            <span>{stats.pending} pending</span>
-            {stats.failed > 0 && <span className="text-red-400">{stats.failed} failed</span>}
-          </div>
-        </div>
-      </BgWrapper>
-    )
-  }
+        </motion.div>
 
-  if (feedItems.length === 0) {
-    return (
-      <BgWrapper className="flex items-center justify-center">
-        <div className="text-white/80 text-xl font-medium">No bets available</div>
-      </BgWrapper>
-    )
-  }
+        {/* Phone — slides in from below at stage 2 */}
+        <AnimatePresence>
+          {stage >= 2 && (
+            <motion.div
+              className="relative flex-shrink-0"
+              initial={{ y: 120, opacity: 0, rotate: 3 }}
+              animate={{ y: 0, opacity: 1, rotate: 0 }}
+              exit={{ y: 120, opacity: 0 }}
+              transition={{ duration: 0.7, ease: easeCubic }}
+              style={{ filter: 'drop-shadow(0 20px 60px rgba(0,0,0,0.5))' }}
+            >
+              <Iphone className="w-[380px] max-h-screen" frameColor="#1a1a1a">
+                {feedItems.length > 0 ? (
+                  <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} />
+                ) : (
+                  <div className="flex items-center justify-center h-full bg-black">
+                    <div className="text-white/30 text-sm">Loading shorts...</div>
+                  </div>
+                )}
+              </Iphone>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-  return (
-    <BgWrapper>
-      <div className="relative max-h-screen" style={{ filter: 'drop-shadow(0 20px 60px rgba(0,0,0,0.5))' }}>
-        <Iphone className="w-[380px] max-h-screen" frameColor="#1a1a1a">
-          <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} />
-        </Iphone>
-        
-        {currentMarket && (
-          <div 
-            className="absolute left-full top-1/2 -translate-y-1/2 ml-6 w-[320px] rounded-2xl p-4"
-            style={{
-              background: 'rgba(20, 30, 25, 0.88)',
-              backdropFilter: 'blur(20px)',
-              border: '1px solid rgba(16, 185, 129, 0.3)',
-              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(16, 185, 129, 0.1)',
-            }}
-          >
-            <div className="flex items-start gap-3 mb-3">
-              {currentMarket.image_url && !imgError ? (
-                <img
-                  src={currentMarket.image_url}
-                  alt=""
-                  className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
-                  onError={() => setImgError(true)}
-                />
-              ) : (
-                <div 
-                  className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ background: 'rgba(16, 185, 129, 0.2)' }}
-                >
-                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-emerald-400">
-                    <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
-                  </svg>
-                </div>
-              )}
-              <p className="text-white/90 text-xs leading-snug flex-1 line-clamp-2 min-h-[2.5em]">
-                {currentMarket.question}
-              </p>
-            </div>
-
-            <div className="flex items-center justify-between text-xs">
-              <a
-                href={`https://kalshi.com/events/${currentMarket.event_ticker || currentMarket.ticker}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 text-white/50 hover:text-white transition-colors"
-              >
-                View on Kalshi
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3">
-                  <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
-                </svg>
-              </a>
-              <div className="flex gap-2">
-                <button
-                  className="px-3 py-1 text-xs glass-btn-yes"
-                  onClick={() => handleBet('YES')}
-                >
-                  Yes
-                </button>
-                <button
-                  className="px-3 py-1 text-xs glass-btn-no"
-                  onClick={() => handleBet('NO')}
-                >
-                  No
-                </button>
+        {/* Bet card — slides in from right at stage 3 */}
+        <AnimatePresence>
+          {stage >= 3 && (
+            <motion.div
+              className="absolute left-[calc(50%+210px)] w-[320px] rounded-2xl p-4"
+              initial={{ x: 40, opacity: 0, rotate: 2 }}
+              animate={{ x: 0, opacity: 1, rotate: 0 }}
+              exit={{ x: 40, opacity: 0 }}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+              style={{
+                background: 'rgba(30, 30, 30, 0.88)',
+                backdropFilter: 'blur(20px)',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+              }}
+            >
+              {/* Demo bet card content */}
+              <div className="flex items-start gap-3 mb-3">
+                {currentMarket?.image_url && !imgError ? (
+                  <img
+                    src={currentMarket.image_url}
+                    alt=""
+                    className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
+                    onError={() => setImgError(true)}
+                  />
+                ) : (
+                  <div
+                    className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ background: 'rgba(16, 185, 129, 0.2)' }}
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-emerald-400">
+                      <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
+                    </svg>
+                  </div>
+                )}
+                <p className="text-white/90 text-xs leading-snug flex-1 line-clamp-2 min-h-[2.5em]">
+                  {currentMarket?.question ?? 'Will this event happen by end of month?'}
+                </p>
               </div>
-            </div>
-          </div>
-        )}
+
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-white/50">View on Kalshi</span>
+                <div className="flex gap-2">
+                  <button className="px-3 py-1 text-xs glass-btn-yes">Yes</button>
+                  <button className="px-3 py-1 text-xs glass-btn-no">No</button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
+
+      {/* Spacebar hint — Framer Motion infinite pulse */}
+      <motion.div
+        className="absolute bottom-3 left-0 right-0 flex justify-center z-30"
+        animate={{ opacity: [0.5, 1, 0.5] }}
+        transition={{ duration: 2, ease: 'easeInOut', repeat: Infinity }}
+      >
+        <span className="text-white/50 text-sm">
+          Press space to continue
+        </span>
+      </motion.div>
     </BgWrapper>
   )
 }

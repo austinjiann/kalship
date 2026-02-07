@@ -11,10 +11,10 @@ let globalMuted = true
 interface ShortCardProps {
   item: FeedItem
   isActive: boolean
+  shouldRender?: boolean
 }
 
-function ShortCard({ item, isActive }: ShortCardProps) {
-  console.log('[ShortCard] render', item.youtube.video_id)
+function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const playerReadyRef = useRef(false)
@@ -63,12 +63,13 @@ function ShortCard({ item, isActive }: ShortCardProps) {
 
   useEffect(() => {
     activeStateRef.current = isActive
+    if (!shouldRender) return
     syncPlayback(isActive)
     if (isActive) {
       setIsMuted(globalMuted)
       syncMute()
     }
-  }, [isActive, syncPlayback, syncMute])
+  }, [isActive, shouldRender, syncPlayback, syncMute])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -132,6 +133,14 @@ function ShortCard({ item, isActive }: ShortCardProps) {
     )
   }, [iframeId])
 
+  if (!shouldRender) {
+    return (
+      <div className="short-card">
+        <div className="video-container" style={{ width: '100%', height: '100%', background: '#000' }} />
+      </div>
+    )
+  }
+
   return (
     <div className="short-card">
       <div className="video-container">
@@ -191,6 +200,7 @@ function ShortCard({ item, isActive }: ShortCardProps) {
 export default memo(ShortCard, (prevProps, nextProps) => {
   return (
     prevProps.item.youtube.video_id === nextProps.item.youtube.video_id &&
-    prevProps.isActive === nextProps.isActive
+    prevProps.isActive === nextProps.isActive &&
+    prevProps.shouldRender === nextProps.shouldRender
   )
 })

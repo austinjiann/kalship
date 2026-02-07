@@ -41,6 +41,8 @@ export function Iphone({
       className={`relative inline-block align-middle leading-none ${className}`}
       style={{
         aspectRatio: `${PHONE_WIDTH}/${PHONE_HEIGHT}`,
+        overflow: 'hidden',
+        borderRadius: '17% / 8.4%',
         ...style,
       }}
       {...props}
@@ -94,9 +96,9 @@ export function Iphone({
           className="absolute z-0 bg-black"
           style={{
             left: `${LEFT_PCT}%`,
-            top: `${TOP_PCT}%`,
+            top: `${TOP_PCT - 3}%`,
             width: `${WIDTH_PCT}%`,
-            height: `${HEIGHT_PCT}%`,
+            height: `${HEIGHT_PCT + 3}%`,
             borderRadius: `${RADIUS_H}% / ${RADIUS_V}%`,
             overflow: 'hidden',
           }}
