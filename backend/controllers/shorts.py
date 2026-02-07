@@ -11,3 +11,5 @@ class Shorts(APIController):
     @get("/health")
     async def health_check(self):
         return json({"status": "ok"})
+
+# call klashi functions
