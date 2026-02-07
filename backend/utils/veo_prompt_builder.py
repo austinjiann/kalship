@@ -1,41 +1,41 @@
 def create_video_prompt(
     title: str,
-    caption: str,
+    outcome: str,
     original_bet_link: str,
 ) -> str:
     """
     Build a Veo prompt for an exciting short-form video.
-    Works for any topic: sports, politics, crypto, entertainment, etc.
+    The generated sequence should clearly reinforce the selected outcome.
     """
-    return f"""Create an 8-second cinematic viral video clip.
+    return f"""Create an 8-second vertical cinematic video from the provided start frame.
 
-SCENARIO: {title}
+BET TOPIC: {title}
+SELECTED OUTCOME (must stay consistent): {outcome}
+KALSHI LINK CONTEXT: {original_bet_link}
 
-Animate this starting frame into a dramatic, attention-grabbing sequence.
+CORE DIRECTIVE:
+- The sequence must clearly communicate that the selected outcome is happening.
+- Keep subjects consistent with the start frame identity and styling.
+- Prioritize action and momentum over abstract mood shots.
 
-ANALYZE THE SCENARIO AND CREATE APPROPRIATE MOTION:
+BEAT PLAN (8 SECONDS):
+0.0-2.5s:
+- Immediate kinetic action and camera push-in.
+- Strong environmental motion (crowd surge, particles, debris, rain, confetti, field motion).
+2.5-5.5s:
+- Peak action moment in dramatic near-slow motion.
+- Hero subject performs decisive movement tied to the outcome.
+5.5-8.0s:
+- Explosive payoff and reaction shot with cinematic finish.
+- End on a clear, high-confidence visual that reinforces the outcome.
 
-For SPORTS: Athletic action, slow-mo replay, crowd eruption, confetti celebration
-For POLITICS: Dramatic speech moment, crowd cheering, victory gestures, camera flashes
-For FINANCE/CRYPTO: Explosive growth visualization, rockets launching, coins flying, chart explosions
-For ENTERTAINMENT: Award moment, standing ovation, confetti drop, spotlight drama
+STYLE + CAMERA:
+- Blockbuster sports-promo or movie-trailer intensity.
+- Dynamic handheld/dolly/telephoto cuts, but keep continuity.
+- Realistic physics, crisp detail, rich contrast, dramatic lighting.
+- No static framing, no slideshow behavior, no reverse motion.
 
-SEQUENCE STRUCTURE:
-0-3s: Build tension - dramatic action or movement begins
-3-5s: Peak moment - slow-motion on the key instant
-5-8s: Release - celebration, reaction, or dramatic conclusion
-
-CINEMATIC STYLE:
-- Super Bowl commercial / movie trailer quality
-- Dynamic camera movement: dolly, zoom, rack focus
-- Dramatic lighting with lens flares and atmosphere
-- Quick cuts between angles are encouraged
-- Professional color grading
-
-MOTION REQUIREMENTS:
-- Smooth, realistic physics
-- Forward momentum - never reverse or rewind
-- Environmental motion: particles, confetti, crowd movement
-- Subject motion: gestures, reactions, movement
-
-Make it feel like a blockbuster movie moment compressed into 8 seconds."""
+OUTPUT CONSTRAINTS:
+- Vertical 9:16 composition.
+- No text overlays, subtitles, logos, watermarks, or UI.
+- No identity drift or face morphing."""

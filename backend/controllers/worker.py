@@ -9,7 +9,11 @@ class Worker(APIController):
 
     @post("/process")
     async def process_job(self, data: dict) -> Response:
-        required = ("job_id", "title", "caption", "original_bet_link")
+        # Support queued legacy jobs that still send "caption".
+        if not data.get("outcome") and data.get("caption"):
+            data["outcome"] = data.get("caption")
+
+        required = ("job_id", "title", "outcome", "original_bet_link")
         missing = [key for key in required if not data.get(key)]
         if missing:
             return json(

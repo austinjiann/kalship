@@ -7,7 +7,7 @@ from typing import Optional, Literal
 class VideoJobRequest:
     """Request to create a video job"""
     title: str
-    caption: str
+    outcome: str
     original_bet_link: str
     duration_seconds: int = 8
     source_image_url: Optional[str] = None  # Optional real image to use as base
@@ -19,7 +19,7 @@ class WorkerJobPayload:
     """Payload sent to worker for processing"""
     job_id: str
     title: str
-    caption: str
+    outcome: str
     original_bet_link: str
     duration_seconds: int = 6
 

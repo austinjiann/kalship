@@ -14,6 +14,18 @@ from utils.env import settings
 
 logger = logging.getLogger("vertex_service")
 
+
+def _infer_mime_type(image_bytes: bytes) -> str:
+    """Best-effort image MIME sniffing for Gemini/Veo inputs."""
+    if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if image_bytes.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if image_bytes.startswith(b"RIFF") and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
+
+
 class VertexService:
     def __init__(self):
         logger.info(f"Initializing VertexService for project={settings.GOOGLE_CLOUD_PROJECT}, location={settings.GOOGLE_CLOUD_LOCATION}")
@@ -34,21 +46,28 @@ class VertexService:
     ) -> GenerateVideosOperation:
         output_gcs_uri = f"gs://{self.bucket_name}/videos/"
 
-        # Veo only supports single image - Gemini handles the compositing
+        # Veo only supports one conditioning image. Gemini composes references into this start frame first.
         logger.info(f"Calling Veo with 1 input image ({len(image_data)} bytes)")
+        if reference_images:
+            logger.info(f"Reference image count used to build start frame: {len(reference_images)}")
+        image_mime = _infer_mime_type(image_data)
 
         operation = self.client.models.generate_videos(
             model="veo-3.1-fast-generate-001",
             prompt=prompt,
             image=Image(
                 image_bytes=image_data,
-                mime_type="image/png",
+                mime_type=image_mime,
             ),
             config=GenerateVideosConfig(
                 aspect_ratio="9:16",
                 duration_seconds=duration_seconds,
                 output_gcs_uri=output_gcs_uri,
-                negative_prompt="text, captions, subtitles, annotations, low quality, static, ugly, weird physics, backwards motion",
+                negative_prompt=(
+                    "text, captions, subtitles, annotations, logos, low quality, static shot, slideshow, "
+                    "ugly, bad anatomy, extra limbs, deformed faces, identity drift, face morphing, "
+                    "weird physics, backwards motion, reverse playback"
+                ),
             ),
         )
         return operation
@@ -67,30 +86,32 @@ class VertexService:
         # Add source image first if provided
         if image:
             logger.info(f"Adding source image ({len(image)} bytes) to Gemini request")
-            contents.append(Part.from_bytes(data=image, mime_type="image/png"))
+            contents.append(Part.from_bytes(data=image, mime_type=_infer_mime_type(image)))
 
         # Add reference images for additional context
         if reference_images:
             logger.info(f"Adding {len(reference_images)} reference image(s) to Gemini request")
             for i, ref_img in enumerate(reference_images):
                 logger.info(f"  Reference image {i+1}: {len(ref_img)} bytes")
-                contents.append(Part.from_bytes(data=ref_img, mime_type="image/png"))
+                contents.append(Part.from_bytes(data=ref_img, mime_type=_infer_mime_type(ref_img)))
         else:
             logger.info("No reference images provided to Gemini")
 
-        # Build the prompt based on what images we have
+        # Build strict image-conditioning instructions based on supplied images.
         if image and reference_images:
-            # Source image + reference headshots
             enhanced_prompt = f"""{prompt}
 
 IMAGE USAGE INSTRUCTIONS:
-- IMAGE 1 (first image): This is an ACTION REFERENCE. Use this for the pose, composition, energy, and athletic movement. Recreate this dynamic action.
-- IMAGES 2+: These are PLAYER HEADSHOTS. Use these faces EXACTLY on the players in your generated image. The faces must match these references.
-- Copy the exact uniform colors, helmet design, and team branding from the action image.
+- IMAGE 1 is the ACTION AND COMPOSITION anchor.
+- IMAGES 2+ are IDENTITY anchors.
 
-CRITICAL: The player faces MUST match the headshot references provided."""
+HARD CONSTRAINTS:
+- Faces from IMAGES 2+ must match exactly (facial structure, skin tone, hairline, age range).
+- Do not merge identities, swap faces, or invent new primary subjects.
+- Keep uniform/team styling from IMAGE 1 when visible.
+- Preserve high-energy motion pose from IMAGE 1.
+- Scene must clearly depict the selected outcome as true."""
         elif image:
-            # Just source image, no headshots
             enhanced_prompt = f"""{prompt}
 
 Use the provided action image as reference for:
@@ -99,12 +120,14 @@ Use the provided action image as reference for:
 - Energy and movement style
 - Stadium atmosphere
 
-Recreate this action with 4K cinematic quality."""
+Create a cinematic, action-heavy frame that can cleanly animate into an intense short clip."""
         elif reference_images:
-            # Just headshots, no action reference
             enhanced_prompt = f"""{prompt}
 
-The provided images are PLAYER HEADSHOTS. Use these faces EXACTLY on the players you generate. The faces must match these references precisely."""
+The provided images are IDENTITY references.
+- The main subjects must match these faces exactly.
+- Build a dynamic, action-first scene around these people.
+- No face morphing, no identity swaps."""
         else:
             enhanced_prompt = prompt
 
@@ -130,11 +153,11 @@ The provided images are PLAYER HEADSHOTS. Use these faces EXACTLY on the players
     async def generate_image_content(
         self,
         title: str,
-        caption: str,
+        outcome: str,
         additional: str | None = None,
         image: bytes | None = None
     ) -> bytes:
-        prompt = f"{title}\n{caption}"
+        prompt = f"{title}\n{outcome}"
         if additional:
             prompt += f"\n{additional}"
         return await self.generate_image_from_prompt(prompt=prompt, image=image)

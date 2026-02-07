@@ -135,17 +135,17 @@
             <input
                 type="text"
                 id="title"
-                value="Seahawks Win Super Bowl"
+                value="Who wins Super Bowl LX?"
                 required
             >
         </div>
 
         <div class="form-group">
-            <label for="caption">Caption *</label>
+            <label for="outcome">Outcome * (exact Kalshi outcome)</label>
             <textarea
-                id="caption"
+                id="outcome"
                 required
-            >who will win super bowl lx? #nfl #superbowl</textarea>
+            >Seattle Seahawks</textarea>
         </div>
 
         <div class="form-group">
@@ -185,11 +185,10 @@
                 id="referenceImageUrls"
                 placeholder="https://i.imgur.com/example1.jpg
 https://pbs.twimg.com/media/example2.png"
-                value="https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/4430878.png&w=350&h=254
-https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png"
                 style="min-height: 60px;"
-            ></textarea>
-            <small style="color: #666;">Direct image URLs only (.jpg, .png) - one per line. Right-click an image → "Copy image address"</small>
+            >https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/4430878.png&w=350&h=254
+https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png&w=350&h=254</textarea>
+            <small style="color: #666;">Direct image URLs only (.jpg, .png) - one per line. Right-click an image -> "Copy image address"</small>
         </div>
 
         <button type="submit" id="submitBtn">Start Job</button>
@@ -271,7 +270,7 @@ https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png"
             e.preventDefault();
 
             const title = document.getElementById('title').value;
-            const caption = document.getElementById('caption').value;
+            const outcome = document.getElementById('outcome').value;
             const originalBetLink = document.getElementById('originalBetLink').value;
             const duration = parseInt(document.getElementById('duration').value) || 8;
             const sourceImageUrl = document.getElementById('sourceImageUrl').value.trim() || null;
@@ -299,7 +298,7 @@ https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png"
             log('========== NEW JOB SUBMISSION ==========', 'info');
             log(`API URL: ${getApiUrl()}`, 'info');
             log(`Title: ${title}`, 'info');
-            log(`Caption: ${caption.substring(0, 50)}...`, 'info');
+            log(`Outcome: ${outcome.substring(0, 50)}...`, 'info');
             log(`Bet Link: ${originalBetLink}`, 'info');
             if (referenceImageUrls.length > 0) {
                 log(`Reference images: ${referenceImageUrls.length} URL(s)`, 'info');
@@ -314,7 +313,7 @@ https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png"
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         title,
-                        caption,
+                        outcome,
                         original_bet_link: originalBetLink,
                         duration_seconds: duration,
                         source_image_url: sourceImageUrl,

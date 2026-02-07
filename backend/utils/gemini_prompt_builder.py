@@ -1,43 +1,34 @@
 def create_first_image_prompt(
     title: str,
-    caption: str,
+    outcome: str,
     original_bet_link: str,
 ) -> str:
     """
-    Build a first-frame prompt for Gemini image generation.
-    Works for any topic: sports, politics, crypto, entertainment, etc.
+    Build the first-frame prompt for Gemini image generation.
+    The frame should unambiguously depict the selected Kalshi outcome.
     """
-    return f"""Create a 4K cinematic frame for a viral short-form video advertisement.
+    return f"""Create a single 4K cinematic start frame for an 8-second vertical short video.
 
-SCENARIO: {title}
+BET TOPIC: {title}
+SELECTED OUTCOME (must be visually true): {outcome}
+KALSHI LINK CONTEXT: {original_bet_link}
 
-ANALYZE THE SCENARIO AND CREATE THE MOST DRAMATIC VISUAL:
+PRIMARY GOAL:
+- Show the selected outcome as already happening right now.
+- Build a high-impact, action-heavy moment, not a static portrait.
 
-For SPORTS (games, championships, players):
-- Mid-action athletic moment: diving catch, slam dunk, goal celebration
-- Player faces must match any provided headshot references
-- Accurate team uniforms and stadium atmosphere
+SCENE DIRECTION:
+- Vertical 9:16 composition optimized for mobile shorts.
+- Mid-action peak moment with motion cues (speed trails, debris, crowd reaction, dramatic body movement).
+- Cinematic realism with strong contrast, stadium/event atmosphere, and dramatic lighting.
+- If the topic is sports, prioritize gameplay intensity and authentic uniforms.
+- If people are provided in references, they must be the clear lead subjects.
 
-For POLITICS (elections, candidates, legislation):
-- Dramatic podium moment, victory celebration, or tense debate scene
-- Politician faces must match any provided photo references
-- Capitol building, rally crowd, or press conference setting
+STRICT REQUIREMENTS:
+1. Use provided images as hard references for subject identity and styling.
+2. Preserve recognizable faces and do not alter identity.
+3. No text, captions, watermarks, graphics, or UI overlays.
+4. No bland studio shots, no static posed lineup.
+5. The frame must look ready to animate into a blockbuster sequence.
 
-For FINANCE/CRYPTO (stocks, Bitcoin, markets):
-- Dramatic visualization: rocket launch, explosion of coins, trading floor chaos
-- Abstract energy: glowing charts, digital particles, futuristic aesthetic
-- Can include symbolic imagery (bulls, bears, rockets, moons)
-
-For ENTERTAINMENT (awards, movies, celebrities):
-- Red carpet glamour, award moment, or performance shot
-- Celebrity faces must match any provided photo references
-- Stage lighting, audience reactions, flashbulbs
-
-REQUIREMENTS:
-1. Use any provided images as REFERENCE for faces, style, or composition
-2. Vertical 9:16 aspect ratio (mobile/TikTok format)
-3. 4K cinematic quality - dramatic lighting, sharp details
-4. NO text, NO graphics, NO watermarks, NO overlays
-5. This frame will be animated into a video - make it dynamic and exciting
-
-Create a single powerful frame that makes viewers stop scrolling."""
+Output exactly one photorealistic image."""

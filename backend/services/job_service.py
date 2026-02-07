@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import traceback
 import uuid
 from datetime import datetime, timedelta
 from typing import Optional
@@ -200,7 +201,7 @@ class JobService:
                 "status": "pending",
                 "job_start_time": datetime.now().isoformat(),
                 "title": request.title,
-                "caption": request.caption,
+                "outcome": request.outcome,
                 "original_bet_link": request.original_bet_link,
                 "duration_seconds": request.duration_seconds,
                 "source_image_url": request.source_image_url,
@@ -210,7 +211,7 @@ class JobService:
 
         job_data = {
             "title": request.title,
-            "caption": request.caption,
+            "outcome": request.outcome,
             "original_bet_link": request.original_bet_link,
             "duration_seconds": request.duration_seconds,
             "source_image_url": request.source_image_url,
@@ -233,7 +234,9 @@ class JobService:
 
         try:
             title = job_data["title"]
-            caption = job_data["caption"]
+            outcome = (job_data.get("outcome") or job_data.get("caption") or "").strip()
+            if not outcome:
+                raise ValueError("outcome is required")
             original_bet_link = job_data["original_bet_link"]
             duration = int(job_data.get("duration_seconds", 8))
             source_image_url = job_data.get("source_image_url")
@@ -261,7 +264,11 @@ class JobService:
                 print(f"[{jid}] No reference image URLs provided", flush=True)
 
             # Generate first frame (from source image + reference images if available)
-            first_prompt = create_first_image_prompt(title=title, caption=caption, original_bet_link=original_bet_link)
+            first_prompt = create_first_image_prompt(
+                title=title,
+                outcome=outcome,
+                original_bet_link=original_bet_link,
+            )
             first_image = await self.vertex_service.generate_image_from_prompt(
                 prompt=first_prompt,
                 image=source_image,
@@ -272,7 +279,11 @@ class JobService:
             if self.bucket:
                 image_uri = await asyncio.to_thread(self._upload_image_sync, job_id, 1, first_image)
 
-            veo_prompt = create_video_prompt(title=title, caption=caption, original_bet_link=original_bet_link)
+            veo_prompt = create_video_prompt(
+                title=title,
+                outcome=outcome,
+                original_bet_link=original_bet_link,
+            )
             operation = await self.vertex_service.generate_video_content(
                 prompt=veo_prompt,
                 image_data=first_image,
@@ -285,7 +296,7 @@ class JobService:
                 "operation_name": operation.name,
                 "job_start_time": existing_job.get("job_start_time") if existing_job else start_time,
                 "title": title,
-                "caption": caption,
+                "outcome": outcome,
                 "original_bet_link": original_bet_link,
                 "duration_seconds": duration,
                 "image_uri": image_uri,
@@ -299,7 +310,7 @@ class JobService:
                 "error": str(exc),
                 "job_start_time": existing_job.get("job_start_time") if existing_job else start_time,
                 "title": job_data.get("title"),
-                "caption": job_data.get("caption"),
+                "outcome": job_data.get("outcome") or job_data.get("caption"),
                 "original_bet_link": job_data.get("original_bet_link"),
                 "duration_seconds": int(job_data.get("duration_seconds", 8)),
             })

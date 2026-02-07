@@ -22,11 +22,18 @@ class Jobs(APIController):
         # Handle reference_image_urls - can be list or comma-separated string
         ref_urls = payload.get("reference_image_urls") or payload.get("referenceImageUrls") or []
         if isinstance(ref_urls, str):
-            ref_urls = [u.strip() for u in ref_urls.split(",") if u.strip()]
+            rows = ref_urls.replace("\r", "\n").split("\n")
+            ref_urls = [
+                url.strip()
+                for row in rows
+                for url in row.split(",")
+                if url.strip()
+            ]
 
         return {
             "title": payload.get("title"),
-            "caption": payload.get("caption"),
+            # New schema uses "outcome"; keep "caption" as backward-compatible fallback.
+            "outcome": payload.get("outcome") or payload.get("caption"),
             "original_bet_link": (
                 payload.get("original_bet_link")
                 or payload.get("originalBetLink")
@@ -69,19 +76,19 @@ class Jobs(APIController):
 
         payload = self._coerce_payload(body)
         title = (payload.get("title") or "").strip()
-        caption = (payload.get("caption") or "").strip()
+        outcome = (payload.get("outcome") or "").strip()
         original_bet_link = (payload.get("original_bet_link") or "").strip()
 
         log_api("/create", f"Title: {title[:50]}...")
-        log_api("/create", f"Caption: {caption[:50]}...")
+        log_api("/create", f"Outcome: {outcome[:50]}...")
         log_api("/create", f"Bet link: {original_bet_link}")
 
-        if not title or not caption or not original_bet_link:
+        if not title or not outcome or not original_bet_link:
             log_api("/create", "ERROR: Missing required fields")
             return json(
                 {
                     "error": (
-                        "title, caption, and original_bet_link are required"
+                        "title, outcome, and original_bet_link are required"
                     )
                 },
                 status=400,
@@ -97,7 +104,7 @@ class Jobs(APIController):
 
         job_request = VideoJobRequest(
             title=title,
-            caption=caption,
+            outcome=outcome,
             original_bet_link=original_bet_link,
             duration_seconds=max(5, min(duration_seconds, 8)),  # Veo supports 5-8 seconds
             source_image_url=source_image_url,
