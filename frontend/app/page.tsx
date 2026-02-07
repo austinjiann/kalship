@@ -16,7 +16,7 @@ export default function Home() {
   useEffect(() => {
     async function fetchFeed() {
       try {
-        const res = await fetch(`${API_URL}/feed`)
+        const res = await fetch(`${API_URL}/shorts/feed`)
         if (res.ok) {
           const data = await res.json()
           setFeedItems(data)
@@ -59,7 +59,7 @@ export default function Home() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#9a9a7f] p-8 gap-8">
       <Iphone className="max-w-[340px]" frameColor="#2a2a2a">
-        <Feed key={feedItems.length} ref={feedRef} items={feedItems} onCurrentItemChange={(item) => setCurrentMarket(item.kalshi)} />
+        <Feed ref={feedRef} items={feedItems} onCurrentItemChange={(item) => setCurrentMarket(item.kalshi)} />
       </Iphone>
 
       <div className="flex flex-col gap-4">

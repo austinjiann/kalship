@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useCallback, useState, useImperativeHandle, forwardRef } from 'react'
+import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react'
 import { FeedItem } from '@/types'
 import ShortCard from './ShortCard'
 
@@ -17,51 +17,49 @@ export interface FeedRef {
 export default forwardRef<FeedRef, FeedProps>(function Feed({ items, onCurrentItemChange }, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [activeIndex, setActiveIndex] = useState(0)
+  const activeIndexRef = useRef(0)
+  const scrollFnRef = useRef<(index: number) => void>(() => {})
 
-  const scrollToIndex = useCallback((index: number) => {
+  scrollFnRef.current = (index: number) => {
     if (!containerRef.current || index < 0 || index >= items.length) return
     const container = containerRef.current
     const itemHeight = container.clientHeight
     container.scrollTo({ top: index * itemHeight, behavior: 'smooth' })
+    activeIndexRef.current = index
     setActiveIndex(index)
     if (items[index]) {
       onCurrentItemChange?.(items[index])
     }
-  }, [items, onCurrentItemChange])
+  }
 
   useImperativeHandle(ref, () => ({
-    scrollToNext: () => scrollToIndex(activeIndex + 1),
-    scrollToPrev: () => scrollToIndex(activeIndex - 1),
-  }), [activeIndex, scrollToIndex])
-
-  const handleScroll = useCallback(() => {
-    if (!containerRef.current) return
-    
-    const container = containerRef.current
-    const scrollTop = container.scrollTop
-    const itemHeight = container.clientHeight
-    const currentIndex = Math.round(scrollTop / itemHeight)
-    
-    if (currentIndex !== activeIndex && items[currentIndex]) {
-      setActiveIndex(currentIndex)
-      onCurrentItemChange?.(items[currentIndex])
-    }
-  }, [items, onCurrentItemChange, activeIndex])
+    scrollToNext: () => scrollFnRef.current(activeIndexRef.current + 1),
+    scrollToPrev: () => scrollFnRef.current(activeIndexRef.current - 1),
+  }), [])
 
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-    
+
+    const handleScroll = () => {
+      const scrollTop = container.scrollTop
+      const itemHeight = container.clientHeight
+      const currentIndex = Math.round(scrollTop / itemHeight)
+
+      if (currentIndex !== activeIndexRef.current && items[currentIndex]) {
+        activeIndexRef.current = currentIndex
+        setActiveIndex(currentIndex)
+        onCurrentItemChange?.(items[currentIndex])
+      }
+    }
+
     container.addEventListener('scroll', handleScroll)
     return () => container.removeEventListener('scroll', handleScroll)
-  }, [handleScroll])
-
-  const initializedRef = useRef(false)
+  }, [items, onCurrentItemChange])
 
   useEffect(() => {
-    if (!initializedRef.current && items.length > 0 && onCurrentItemChange) {
+    if (items.length > 0 && onCurrentItemChange) {
       onCurrentItemChange(items[0])
-      initializedRef.current = true
     }
   }, [items, onCurrentItemChange])
 
