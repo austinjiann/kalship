@@ -57,8 +57,10 @@ export default forwardRef<FeedRef, FeedProps>(function Feed({ items, onCurrentIt
     return () => container.removeEventListener('scroll', handleScroll)
   }, [items, onCurrentItemChange])
 
+  const initializedRef = useRef(false)
   useEffect(() => {
-    if (items.length > 0 && onCurrentItemChange) {
+    if (items.length > 0 && onCurrentItemChange && !initializedRef.current) {
+      initializedRef.current = true
       onCurrentItemChange(items[0])
     }
   }, [items, onCurrentItemChange])

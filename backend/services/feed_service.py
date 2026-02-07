@@ -13,6 +13,20 @@ from utils.env import settings
 
 KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
+SPORTS_CRYPTO_SERIES = {
+    "bitcoin": "KXBTC", "btc": "KXBTC", "crypto": "KXBTC",
+    "ethereum": "KXETH", "eth": "KXETH",
+    "xrp": "KXXRP",
+    "super bowl": "KXSB", "superbowl": "KXSB",
+    "nfl": "KXSB", "patriots": "KXSB", "chiefs": "KXSB", "eagles": "KXSB", "seahawks": "KXSB",
+    "nba": "KXNBAGAME", "basketball": "KXNBAGAME",
+    "lakers": "KXNBAGAME", "celtics": "KXNBAGAME", "warriors": "KXNBAGAME",
+    "mlb": "KXMLBGAME", "baseball": "KXMLBGAME",
+    "nhl": "KXNHLGAME", "hockey": "KXNHLGAME",
+    "world cup": "KXWCGAME", "fifa": "KXWCGAME", "soccer": "KXWCGAME",
+    "s&p": "KXINX", "nasdaq": "KXINX", "dow": "KXINX",
+}
+
 
 class FeedService:
     def __init__(self):
@@ -47,9 +61,24 @@ class FeedService:
             "Content-Type": "application/json",
         }
 
-    async def _get_markets(self, status: str = "open", limit: int = 100) -> list[dict]:
+    async def _get_events(self, status: str = "open", limit: int = 200) -> list[dict]:
+        path = "/trade-api/v2/events"
+        params = {"status": status, "limit": limit, "with_nested_markets": "true"}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{KALSHI_BASE_URL}/events",
+                params=params,
+                headers=self._get_kalshi_headers("GET", path),
+            ) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return data.get("events", [])
+
+    async def _get_markets_for_event(
+        self, event_ticker: str, status: str = "open", limit: int = 50
+    ) -> list[dict]:
         path = "/trade-api/v2/markets"
-        params = {"status": status, "limit": limit}
+        params = {"status": status, "limit": limit, "event_ticker": event_ticker}
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 f"{KALSHI_BASE_URL}/markets",
@@ -59,6 +88,32 @@ class FeedService:
                 response.raise_for_status()
                 data = await response.json()
                 return data.get("markets", [])
+
+    async def _get_markets_by_series(
+        self, series_ticker: str, status: str = "open", limit: int = 50
+    ) -> list[dict]:
+        path = "/trade-api/v2/markets"
+        params = {"status": status, "limit": limit, "series_ticker": series_ticker}
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{KALSHI_BASE_URL}/markets",
+                params=params,
+                headers=self._get_kalshi_headers("GET", path),
+            ) as response:
+                response.raise_for_status()
+                data = await response.json()
+                return data.get("markets", [])
+
+    def _detect_series_from_keywords(self, keywords: list[str]) -> Optional[str]:
+        keywords_lower = " ".join(keywords).lower()
+        priority_terms = ["world cup", "fifa", "soccer", "super bowl", "bitcoin", "btc", "crypto"]
+        for term in priority_terms:
+            if term in keywords_lower and term in SPORTS_CRYPTO_SERIES:
+                return SPORTS_CRYPTO_SERIES[term]
+        for term, series in SPORTS_CRYPTO_SERIES.items():
+            if term in keywords_lower:
+                return series
+        return None
 
     async def _get_event(self, event_ticker: str) -> dict:
         path = f"/trade-api/v2/events/{event_ticker}"
@@ -109,38 +164,39 @@ Description: {description[:500]}"""
         keywords_str = response.choices[0].message.content.strip()
         return [k.strip() for k in keywords_str.split(",") if k.strip()]
 
-    async def _match_keywords_to_markets(
-        self, keywords: list[str], markets: list[dict]
-    ) -> list[int]:
-        market_titles = [
-            f"{i}: {m.get('yes_sub_title', m.get('title', 'Unknown'))}"
-            for i, m in enumerate(markets)
+    async def _match_keywords_to_events(
+        self, keywords: list[str], events: list[dict]
+    ) -> Optional[int]:
+        event_titles = [
+            f"{i}: {e.get('title', 'Unknown')}"
+            for i, e in enumerate(events)
         ]
-        market_list = "\n".join(market_titles)
+        event_list = "\n".join(event_titles)
         keywords_str = ", ".join(keywords)
 
-        prompt = f"""You match video keywords to prediction market bets.
+        prompt = f"""Match video keywords to the BEST prediction market event.
 
-Keywords from video: {keywords_str}
+Video keywords: {keywords_str}
 
-Available markets:
-{market_list}
+Available events:
+{event_list}
 
-Return a JSON array of indices (0-based) of the most relevant markets, ranked by relevance.
-Return up to 10 indices. Only return markets that are genuinely related to the keywords.
-If no markets are relevant, return an empty array [].
+Return ONLY a single integer index (0-based) of the best matching event.
+Pick the event most closely related to the video topic.
+If nothing matches well, return 0.
 
-Return ONLY the JSON array, no explanation."""
+Return ONLY the number, nothing else."""
 
         response = await self.openai.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
         )
         try:
-            return json.loads(response.choices[0].message.content.strip())
-        except json.JSONDecodeError:
-            return []
+            result = response.choices[0].message.content.strip()
+            return int(result)
+        except (ValueError, TypeError):
+            return 0
 
     async def _format_market_display(
         self, market: dict, event: dict, keywords: list[str]
@@ -182,30 +238,79 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
             }
 
     async def match_video(self, video_id: str) -> Optional[dict]:
+        print(f"[{video_id}] Starting match...")
         metadata = await self.get_video_metadata(video_id)
+        print(f"[{video_id}] Title: {metadata.get('title', 'No title')}")
+        
         keywords = await self._extract_keywords(metadata["title"], metadata["description"])
+        print(f"[{video_id}] Keywords: {keywords}")
 
         if not keywords:
+            print(f"[{video_id}] FAILED: No keywords extracted")
             return None
 
-        markets = await self._get_markets(status="open", limit=100)
+        series = self._detect_series_from_keywords(keywords)
+        best_event = {}
+        
+        if series:
+            print(f"[{video_id}] Detected series: {series}")
+            markets = await self._get_markets_by_series(series, limit=50)
+            print(f"[{video_id}] Markets from series: {len(markets)}")
+            if markets:
+                best_market = markets[0]
+                event_ticker = best_market.get("event_ticker", "")
+                if event_ticker:
+                    try:
+                        best_event = await self._get_event(event_ticker)
+                    except Exception:
+                        pass
+                print(f"[{video_id}] SUCCESS (series) - Market: {best_market.get('ticker')}")
+                formatted = await self._format_market_display(best_market, best_event, keywords)
+                return {
+                    "youtube": {
+                        "video_id": video_id,
+                        "title": metadata["title"],
+                        "thumbnail": metadata["thumbnail"],
+                        "channel": metadata["channel"],
+                    },
+                    "kalshi": {
+                        "ticker": best_market.get("ticker"),
+                        "question": formatted.get("question", ""),
+                        "outcome": formatted.get("outcome", ""),
+                        "yes_price": best_market.get("yes_bid", 0),
+                        "no_price": best_market.get("no_bid", 0),
+                        "volume": best_market.get("volume", 0),
+                    },
+                    "keywords": keywords,
+                }
+
+        events = await self._get_events(status="open", limit=200)
+        print(f"[{video_id}] Events fetched: {len(events)}")
+        
+        if not events:
+            print(f"[{video_id}] FAILED: No events returned")
+            return None
+
+        event_idx = await self._match_keywords_to_events(keywords, events)
+        print(f"[{video_id}] Matched event index: {event_idx}")
+        
+        if event_idx is None or event_idx >= len(events):
+            event_idx = 0
+        
+        best_event = events[event_idx]
+        print(f"[{video_id}] Matched event: {best_event.get('title', 'Unknown')}")
+        
+        markets = best_event.get("markets", [])
         if not markets:
+            markets = await self._get_markets_for_event(best_event.get("event_ticker", ""))
+        
+        if not markets:
+            print(f"[{video_id}] FAILED: No markets for event")
             return None
-
-        indices = await self._match_keywords_to_markets(keywords, markets)
-        if not indices:
-            return None
-
-        best_market = markets[indices[0]]
-        event_ticker = best_market.get("event_ticker", "")
-        event = {}
-        if event_ticker:
-            try:
-                event = await self._get_event(event_ticker)
-            except Exception:
-                pass
-
-        formatted = await self._format_market_display(best_market, event, keywords)
+        
+        best_market = markets[0]
+        print(f"[{video_id}] SUCCESS (event) - Market: {best_market.get('ticker')}")
+        formatted = await self._format_market_display(best_market, best_event, keywords)
 
         return {
             "youtube": {
