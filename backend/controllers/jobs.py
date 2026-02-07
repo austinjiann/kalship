@@ -27,21 +27,28 @@ class Jobs(APIController):
 
     @post("/create")
     async def create_job(self, request):
-        ct = request.headers.get("content-type") or ""
-        if "application/json" in ct:
+        body = None
+        try:
             body = await request.json()
-        else:
+        except Exception:
             form = await request.form()
-            body = {k: form.get(k) for k in form}
-            if isinstance(body.get("bet"), str):
-                raw_bet = body.get("bet", "").strip()
-                if raw_bet.startswith("{") and raw_bet.endswith("}"):
+            normalized = {}
+            for k, v in form.items():
+                if isinstance(k, bytes):
+                    key = k.decode()
+                else:
+                    key = str(k)
+
+                val = v
+                if isinstance(val, (list, tuple)):
+                    val = val[0] if val else ""
+                if isinstance(val, bytes):
                     try:
-                        parsed = json_lib.loads(raw_bet)
-                        if isinstance(parsed, dict):
-                            body["bet"] = parsed.get("link") or raw_bet
+                        val = val.decode()
                     except Exception:
-                        pass
+                        val = str(val)
+                normalized[key] = val
+            body = normalized
 
         payload = self._coerce_payload(body)
         title = (payload.get("title") or "").strip()

@@ -15,10 +15,6 @@ from utils.env import settings
 
 KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 
-if not firebase_admin._apps:
-    cred = credentials.Certificate("qhacks-486618-firebase-adminsdk-fbsvc-6ae4974082.json")
-    firebase_admin.initialize_app(cred)
-
 SPORTS_CRYPTO_SERIES = {
     "bitcoin": "KXBTC", "btc": "KXBTC", "crypto": "KXBTC",
     "ethereum": "KXETH", "eth": "KXETH",

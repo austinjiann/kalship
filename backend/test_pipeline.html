@@ -100,17 +100,30 @@
     <form id="jobForm">
         <div class="form-group">
             <label for="title">Title *</label>
-            <input type="text" id="title" placeholder="e.g., Epic UFC Knockout" required>
+            <input
+                type="text"
+                id="title"
+                value="Epic UFC Knockout"
+                required
+            >
         </div>
 
         <div class="form-group">
             <label for="caption">Caption *</label>
-            <textarea id="caption" placeholder="e.g., Fighter throws devastating left hook, opponent crumbles to the canvas in slow motion" required></textarea>
+            <textarea
+                id="caption"
+                required
+            >Fighter throws devastating left hook, opponent crumbles to the canvas in slow motion</textarea>
         </div>
 
         <div class="form-group">
             <label for="originalBetLink">Original Bet Link *</label>
-            <input type="url" id="originalBetLink" placeholder="https://kalshi.com/markets/..." required>
+            <input
+                type="url"
+                id="originalBetLink"
+                value="https://kalshi.com/markets/kxufcfight/ufc-fight/kxufcfight-26feb07baudeo"
+                required
+            >
         </div>
 
         <button type="submit" id="submitBtn">Start Job</button>
@@ -169,7 +182,7 @@
             try {
                 log('Creating job...', 'info');
 
-                const response = await fetch(`${getApiUrl()}/jobs/create`, {
+                const response = await fetch(`${getApiUrl()}/api/jobs/create`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -207,7 +220,7 @@
             try {
                 log('Polling status...');
 
-                const response = await fetch(`${getApiUrl()}/jobs/status/${jobId}`);
+                const response = await fetch(`${getApiUrl()}/api/jobs/status/${jobId}`);
                 const data = await response.json();
 
                 statusText.textContent = data.status;
