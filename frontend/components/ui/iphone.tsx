@@ -109,7 +109,7 @@ export function Iphone({
         viewBox={`0 0 ${PHONE_WIDTH} ${PHONE_HEIGHT}`}
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
-        className="absolute inset-0 size-full"
+        className="absolute inset-0 size-full pointer-events-none"
         style={{ transform: "translateZ(0)" }}
       >
         <g mask={hasMedia ? "url(#screenPunch)" : undefined}>
@@ -154,21 +154,21 @@ export function Iphone({
           rx="55.75"
           ry="55.75"
           fill="none"
-          stroke="#888"
-          strokeWidth="2"
+          stroke="rgba(255,255,255,0.12)"
+          strokeWidth="1.5"
         />
         <path
           d="M155 19.25 Q155 19.25 155 30 Q155 50 185 50 H247 Q277 50 277 30 Q277 19.25 277 19.25"
           fill="none"
-          stroke="#888"
-          strokeWidth="2"
+          stroke="rgba(255,255,255,0.12)"
+          strokeWidth="1.5"
         />
         <rect
           x="155"
           y="19.25"
           width="122"
           height="2"
-          fill="#2a2a2a"
+          fill={frameColor}
         />
         <rect
           x="196"
@@ -176,8 +176,20 @@ export function Iphone({
           width="40"
           height="5"
           rx="2.5"
-          fill="#555"
+          fill="#333"
           className="pointer-events-none"
+        />
+
+        <rect
+          x="1.5"
+          y="-0.5"
+          width="430"
+          height="883"
+          rx="73.5"
+          ry="73.5"
+          fill="none"
+          stroke="rgba(255,255,255,0.08)"
+          strokeWidth="1"
         />
 
         <defs>

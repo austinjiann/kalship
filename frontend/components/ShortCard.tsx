@@ -1,35 +1,196 @@
 'use client'
 
-import { memo } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FeedItem } from '@/types'
+
+const YT_BASE_ORIGIN = 'https://www.youtube.com'
+const ALLOWED_ORIGINS = new Set<string>([YT_BASE_ORIGIN, 'https://www.youtube-nocookie.com'])
+
+let globalMuted = true
 
 interface ShortCardProps {
   item: FeedItem
+  isActive: boolean
 }
 
-function ShortCard({ item }: ShortCardProps) {
+function ShortCard({ item, isActive }: ShortCardProps) {
   console.log('[ShortCard] render', item.youtube.video_id)
+
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const playerReadyRef = useRef(false)
+  const activeStateRef = useRef(isActive)
+  const listeningTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+  const iframeId = useMemo(() => `short-${item.youtube.video_id}`, [item.youtube.video_id])
+  const [playerOrigin] = useState(() => (typeof window !== 'undefined' ? window.location.origin : ''))
+  const [isMuted, setIsMuted] = useState(globalMuted)
+
+  const iframeSrc = useMemo(() => {
+    const originParam = playerOrigin ? `&origin=${encodeURIComponent(playerOrigin)}` : ''
+    return (
+      `${YT_BASE_ORIGIN}/embed/${item.youtube.video_id}` +
+      `?autoplay=1&loop=1&mute=1&playlist=${item.youtube.video_id}` +
+      '&controls=0&playsinline=1&rel=0&enablejsapi=1' +
+      originParam
+    )
+  }, [item.youtube.video_id, playerOrigin])
+
+  const postPlayerMessage = useCallback((func: string, args: unknown[] = []) => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+    iframe.contentWindow?.postMessage(JSON.stringify({
+      event: 'command',
+      func,
+      args,
+      id: iframeId,
+    }), YT_BASE_ORIGIN)
+  }, [iframeId])
+
+  const syncPlayback = useCallback((shouldPlay: boolean) => {
+    if (!playerReadyRef.current) return
+    postPlayerMessage(shouldPlay ? 'playVideo' : 'pauseVideo')
+  }, [postPlayerMessage])
+
+  const syncMute = useCallback(() => {
+    if (!playerReadyRef.current) return
+    postPlayerMessage(globalMuted ? 'mute' : 'unMute')
+  }, [postPlayerMessage])
+
+  const toggleMute = useCallback(() => {
+    globalMuted = !globalMuted
+    setIsMuted(globalMuted)
+    postPlayerMessage(globalMuted ? 'mute' : 'unMute')
+  }, [postPlayerMessage])
+
+  useEffect(() => {
+    activeStateRef.current = isActive
+    syncPlayback(isActive)
+    if (isActive) {
+      setIsMuted(globalMuted)
+      syncMute()
+    }
+  }, [isActive, syncPlayback, syncMute])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    playerReadyRef.current = false
+
+    const handleMessage = (event: MessageEvent) => {
+      if (!ALLOWED_ORIGINS.has(event.origin)) {
+        return
+      }
+      let data: { event?: string; id?: string; info?: { playerState?: number } } | null = null
+      try {
+        data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+      } catch {
+        return
+      }
+      if (data?.event === 'onReady' && data?.id === iframeId) {
+        playerReadyRef.current = true
+        syncPlayback(activeStateRef.current)
+        if (!globalMuted) {
+          postPlayerMessage('unMute')
+        }
+      }
+      // When video ends (state 0), restart to prevent end-screen recommendations
+      if (data?.event === 'onStateChange' && data?.id === iframeId && data?.info?.playerState === 0) {
+        postPlayerMessage('seekTo', [0, true])
+        postPlayerMessage('playVideo')
+      }
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => {
+      window.removeEventListener('message', handleMessage)
+      listeningTimersRef.current.forEach(clearTimeout)
+      listeningTimersRef.current = []
+      playerReadyRef.current = false
+    }
+  }, [iframeId, syncPlayback, postPlayerMessage])
+
+  const handleIframeLoad = useCallback(() => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+
+    // Clear any previous retry timers
+    listeningTimersRef.current.forEach(clearTimeout)
+    listeningTimersRef.current = []
+
+    const sendListening = () => {
+      iframe.contentWindow?.postMessage(JSON.stringify({
+        event: 'listening',
+        id: iframeId,
+      }), YT_BASE_ORIGIN)
+    }
+
+    // Send immediately, then retry — YouTube's player script needs time to initialize
+    sendListening()
+    listeningTimersRef.current.push(
+      setTimeout(sendListening, 250),
+      setTimeout(sendListening, 750),
+      setTimeout(sendListening, 2000),
+    )
+  }, [iframeId])
+
   return (
     <div className="short-card">
       <div className="video-container">
         <iframe
-          src={`https://www.youtube-nocookie.com/embed/${item.youtube.video_id}?autoplay=1&loop=1&mute=1&playlist=${item.youtube.video_id}&controls=1&modestbranding=1&playsinline=1&rel=0`}
+          ref={iframeRef}
+          id={iframeId}
+          src={iframeSrc}
           title={item.youtube.title}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
           className="video-iframe"
           style={{ pointerEvents: 'auto' }}
+          onLoad={handleIframeLoad}
         />
       </div>
 
-      <div className="short-info">
-        <span className="channel-name">@{item.youtube.channel}</span>
-        <span className="video-title">{item.youtube.title}</span>
-      </div>
+      <button
+        onClick={toggleMute}
+        style={{
+          position: 'absolute',
+          bottom: 80,
+          right: 12,
+          zIndex: 15,
+          width: 36,
+          height: 36,
+          borderRadius: '50%',
+          border: 'none',
+          background: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          pointerEvents: 'auto',
+          padding: 0,
+        }}
+        aria-label={isMuted ? 'Unmute' : 'Mute'}
+      >
+        {isMuted ? (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+            <line x1="23" y1="9" x2="17" y2="15" />
+            <line x1="17" y1="9" x2="23" y2="15" />
+          </svg>
+        ) : (
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+          </svg>
+        )}
+      </button>
+
     </div>
   )
 }
 
 export default memo(ShortCard, (prevProps, nextProps) => {
-  return prevProps.item.youtube.video_id === nextProps.item.youtube.video_id
+  return (
+    prevProps.item.youtube.video_id === nextProps.item.youtube.video_id &&
+    prevProps.isActive === nextProps.isActive
+  )
 })

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useImperativeHandle, forwardRef, memo } from 'react'
+import { useEffect, useRef, useImperativeHandle, forwardRef, memo, useState, useCallback } from 'react'
 import { FeedItem } from '@/types'
 import ShortCard from './ShortCard'
 
@@ -18,6 +18,8 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
   const containerRef = useRef<HTMLDivElement>(null)
   const activeIndexRef = useRef(0)
   const onCurrentItemChangeRef = useRef(onCurrentItemChange)
+  const lastNotifiedVideoRef = useRef<string | undefined>(undefined)
+  const [activeIndex, setActiveIndex] = useState(0)
   useEffect(() => {
     onCurrentItemChangeRef.current = onCurrentItemChange
   }, [onCurrentItemChange])
@@ -27,7 +29,27 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
     itemsRef.current = items
   }, [items])
 
-  const scrollTo = (index: number) => {
+  const maxAvailableIndex = Math.max(items.length - 1, 0)
+  const safeActiveIndex = Math.max(Math.min(activeIndex, maxAvailableIndex), 0)
+
+  useEffect(() => {
+    activeIndexRef.current = safeActiveIndex
+  }, [safeActiveIndex])
+
+  const setActiveItem = useCallback((index: number) => {
+    if (index < 0 || index >= itemsRef.current.length) {
+      return
+    }
+    activeIndexRef.current = index
+    setActiveIndex(index)
+    const activeItem = itemsRef.current[index]
+    if (activeItem) {
+      lastNotifiedVideoRef.current = activeItem.youtube.video_id
+      onCurrentItemChangeRef.current?.(activeItem)
+    }
+  }, [])
+
+  const scrollTo = useCallback((index: number) => {
     console.log('[Feed] scrollTo called', { index, itemsLength: itemsRef.current.length })
     if (!containerRef.current || index < 0 || index >= itemsRef.current.length) {
       console.log('[Feed] scrollTo aborted')
@@ -37,16 +59,13 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
     const itemHeight = container.clientHeight
     console.log('[Feed] scrollTo executing', { itemHeight, targetTop: index * itemHeight })
     container.scrollTo({ top: index * itemHeight, behavior: 'smooth' })
-    activeIndexRef.current = index
-    if (itemsRef.current[index]) {
-      onCurrentItemChangeRef.current?.(itemsRef.current[index])
-    }
-  }
+    setActiveItem(index)
+  }, [setActiveItem])
 
   useImperativeHandle(ref, () => ({
     scrollToNext: () => scrollTo(activeIndexRef.current + 1),
     scrollToPrev: () => scrollTo(activeIndexRef.current - 1),
-  }), [])
+  }), [scrollTo])
 
   useEffect(() => {
     const container = containerRef.current
@@ -59,27 +78,37 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
 
       if (currentIndex !== activeIndexRef.current && itemsRef.current[currentIndex]) {
         console.log('[Feed] scroll index changed', { from: activeIndexRef.current, to: currentIndex })
-        activeIndexRef.current = currentIndex
-        onCurrentItemChangeRef.current?.(itemsRef.current[currentIndex])
+        setActiveItem(currentIndex)
       }
     }
 
     container.addEventListener('scroll', handleScroll)
     return () => container.removeEventListener('scroll', handleScroll)
-  }, [])
+  }, [setActiveItem])
 
   useEffect(() => {
-    if (items.length > 0 && onCurrentItemChangeRef.current) {
-      onCurrentItemChangeRef.current(items[0])
+    const activeItem = items[safeActiveIndex]
+    if (!activeItem) {
+      lastNotifiedVideoRef.current = undefined
+      return
     }
-  }, [items])
+    if (lastNotifiedVideoRef.current === activeItem.youtube.video_id) {
+      return
+    }
+    lastNotifiedVideoRef.current = activeItem.youtube.video_id
+    onCurrentItemChangeRef.current?.(activeItem)
+  }, [items, safeActiveIndex])
 
   console.log('[Feed] render', { itemsLength: items.length })
 
   return (
     <div ref={containerRef} className="feed-container">
-      {items.map((item) => (
-        <ShortCard key={item.youtube.video_id} item={item} />
+      {items.map((item, index) => (
+        <ShortCard
+          key={item.youtube.video_id}
+          item={item}
+          isActive={index === safeActiveIndex}
+        />
       ))}
     </div>
   )

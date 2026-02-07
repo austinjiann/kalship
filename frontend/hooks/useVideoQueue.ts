@@ -31,27 +31,6 @@ function saveToStorage(queue: QueueItem[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(queue))
 }
 
-function withImageRefreshFlags(queue: QueueItem[]): QueueItem[] {
-  let mutated = false
-  const updated = queue.map(item => {
-    if (
-      item.status === 'matched' &&
-      item.result?.kalshi &&
-      !item.result.kalshi.image_url &&
-      !item.needsRefresh
-    ) {
-      mutated = true
-      return {
-        video_id: item.video_id,
-        status: 'pending',
-        needsRefresh: true,
-      }
-    }
-    return item
-  })
-  return mutated ? updated : queue
-}
-
 export function useVideoQueue() {
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
@@ -63,7 +42,7 @@ export function useVideoQueue() {
     
     const stored = loadFromStorage()
     if (stored.length > 0) {
-      setQueue(withImageRefreshFlags(stored))
+      setQueue(stored)
     } else {
       const initial: QueueItem[] = HARDCODED_VIDEO_IDS.map(id => ({
         video_id: id,
@@ -78,38 +57,6 @@ export function useVideoQueue() {
     if (queue.length > 0) {
       saveToStorage(queue)
     }
-  }, [queue])
-
-  useEffect(() => {
-    if (queue.length === 0) return
-
-    const idsToRefresh = queue
-      .filter(item =>
-        item.status === 'matched' &&
-        item.result?.kalshi &&
-        !item.result.kalshi.image_url
-      )
-      .map(item => item.video_id)
-
-    if (idsToRefresh.length === 0) return
-
-    const refreshSet = new Set(idsToRefresh)
-
-    setQueue(prev => prev.map(item => {
-      if (
-        refreshSet.has(item.video_id) &&
-        item.status === 'matched' &&
-        item.result?.kalshi &&
-        !item.result.kalshi.image_url
-      ) {
-        return {
-          video_id: item.video_id,
-          status: 'pending',
-          needsRefresh: true,
-        }
-      }
-      return item
-    }))
   }, [queue])
 
   const addVideos = useCallback((videoIds: string[]) => {
@@ -137,7 +84,7 @@ export function useVideoQueue() {
       ))
 
       const pendingIds = queue
-        .filter(q => q.status === 'pending' || q.status === 'processing' || q.needsRefresh)
+        .filter(q => q.status === 'pending' || q.status === 'processing')
         .map(q => q.video_id)
         .slice(0, BATCH_SIZE)
 
@@ -159,22 +106,19 @@ export function useVideoQueue() {
         if (pendingIds.includes(item.video_id)) {
           const result = resultsMap.get(item.video_id)
           if (result) {
-            return { ...item, status: 'matched', result, needsRefresh: false }
+            return { ...item, status: 'matched', result }
           }
           if (item.status === 'matched' && item.result) {
-            return { ...item, needsRefresh: false }
+            return item
           }
-          return { ...item, status: 'failed', error: 'No match found', result: undefined, needsRefresh: false }
+          return { ...item, status: 'failed', error: 'No match found', result: undefined }
         }
         return item
       }))
     } catch (err) {
       setQueue(prev => prev.map(item => {
         if (item.status === 'processing') {
-          return { ...item, status: 'failed', error: String(err), needsRefresh: false }
-        }
-        if (item.needsRefresh) {
-          return { ...item, needsRefresh: false }
+          return { ...item, status: 'failed', error: String(err) }
         }
         return item
       }))
@@ -196,7 +140,6 @@ export function useVideoQueue() {
     processing: queue.filter(q => q.status === 'processing').length,
     matched: queue.filter(q => q.status === 'matched').length,
     failed: queue.filter(q => q.status === 'failed').length,
-    refreshPending: queue.filter(q => q.needsRefresh).length,
   }), [queue])
 
   return {

@@ -14,6 +14,7 @@ export interface YouTubeShort {
   title: string
   thumbnail: string
   channel: string
+  channel_thumbnail?: string
 }
 
 export interface FeedItem {
@@ -44,5 +45,4 @@ export interface QueueItem {
   status: QueueItemStatus
   result?: FeedItem
   error?: string
-  needsRefresh?: boolean
 }
