@@ -195,9 +195,21 @@
                 placeholder="https://i.imgur.com/example1.jpg
 https://pbs.twimg.com/media/example2.png"
                 style="min-height: 60px;"
-            >https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/4430878.png&w=350&h=254
-https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png&w=350&h=254</textarea>
+            >https://a.espncdn.com/i/headshots/nfl/players/full/4430878.png
+https://a.espncdn.com/i/headshots/nfl/players/full/3912547.png</textarea>
             <small style="color: #666;">Use direct public image URLs only (JPG/PNG/WebP), one per line. Avoid Google search-result page URLs. When character images are provided, Veo preview reference mode is used (8s, 16:9).</small>
+        </div>
+
+        <div class="form-group">
+            <label for="characterQueries">Character Queries (optional - resolver terms, one per line)</label>
+            <textarea
+                id="characterQueries"
+                placeholder="tiger
+sam darnold headshot
+stormtrooper concept art"
+                style="min-height: 60px;"
+            ></textarea>
+            <small style="color: #666;">Used when you don’t have direct URLs. Resolver runs in parallel and prioritizes accurate assets.</small>
         </div>
 
         <button type="submit" id="submitBtn">Start Job</button>
@@ -290,6 +302,10 @@ https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png&w
             const characterImageUrls = charUrlsRaw
                 ? charUrlsRaw.split(/[,\n]/).map(u => u.trim()).filter(u => u)
                 : [];
+            const characterQueriesRaw = document.getElementById('characterQueries').value.trim();
+            const characterQueries = characterQueriesRaw
+                ? characterQueriesRaw.split(/[,\n]/).map(q => q.trim()).filter(q => q)
+                : [];
 
             submitBtn.disabled = true;
             stopBtn.disabled = false;
@@ -314,6 +330,9 @@ https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png&w
             if (characterImageUrls.length > 0) {
                 log(`Character images: ${characterImageUrls.length} URL(s)`, 'info');
             }
+            if (characterQueries.length > 0) {
+                log(`Character queries: ${characterQueries.join(' | ')}`, 'info');
+            }
 
             try {
                 log('Sending POST to /api/jobs/create...', 'info');
@@ -329,7 +348,8 @@ https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png&w
                         duration_seconds: duration,
                         shorts_style: shortsStyle,
                         source_image_url: sourceImageUrl,
-                        character_image_urls: characterImageUrls
+                        character_image_urls: characterImageUrls,
+                        character_queries: characterQueries
                     })
                 });
 

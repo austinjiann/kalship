@@ -17,25 +17,38 @@ class Jobs(APIController):
     def __init__(self, job_service: JobService):
         self.job_service = job_service
 
+    @staticmethod
+    def _coerce_list(value) -> list[str]:
+        if not value:
+            return []
+        if isinstance(value, str):
+            rows = value.replace("\r", "\n").split("\n")
+            return [
+                item.strip()
+                for row in rows
+                for item in row.split(",")
+                if item.strip()
+            ]
+        if isinstance(value, (list, tuple)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return []
+
     def _coerce_payload(self, payload: dict) -> dict:
         # Handle character image URLs (new key + legacy aliases).
-        char_urls = (
+        char_urls = self._coerce_list(
             payload.get("character_image_urls")
             or payload.get("characterImageUrls")
             or payload.get("reference_image_urls")
             or payload.get("referenceImageUrls")
             or payload.get("additional_image_urls")
             or payload.get("additionalImageUrls")
-            or []
         )
-        if isinstance(char_urls, str):
-            rows = char_urls.replace("\r", "\n").split("\n")
-            char_urls = [
-                url.strip()
-                for row in rows
-                for url in row.split(",")
-                if url.strip()
-            ]
+        char_queries = self._coerce_list(
+            payload.get("character_queries")
+            or payload.get("characterQueries")
+            or payload.get("character_terms")
+            or payload.get("characterTerms")
+        )
 
         return {
             "title": payload.get("title"),
@@ -57,6 +70,7 @@ class Jobs(APIController):
             ),
             "source_image_url": payload.get("source_image_url") or payload.get("sourceImageUrl"),
             "character_image_urls": char_urls,
+            "character_queries": char_queries,
         }
 
     @post("/create")
@@ -115,8 +129,11 @@ class Jobs(APIController):
         shorts_style = normalize_shorts_style(payload.get("shorts_style"))
         source_image_url = (payload.get("source_image_url") or "").strip() or None
         character_image_urls = [u for u in payload.get("character_image_urls", []) if u]
+        character_queries = [q for q in payload.get("character_queries", []) if q]
         log_api("/create", f"Shorts style: {shorts_style}")
         log_api("/create", f"Character image URLs: {len(character_image_urls)}")
+        if character_queries:
+            log_api("/create", f"Character queries: {character_queries}")
 
         job_request = VideoJobRequest(
             title=title,
@@ -126,6 +143,7 @@ class Jobs(APIController):
             shorts_style=shorts_style,
             source_image_url=source_image_url,
             character_image_urls=character_image_urls,
+            character_queries=character_queries,
         )
 
         log_api("/create", f"Creating video job (duration={job_request.duration_seconds}s)...")

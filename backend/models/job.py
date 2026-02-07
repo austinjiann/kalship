@@ -12,18 +12,7 @@ class VideoJobRequest:
     shorts_style: str = "action_commentary"
     source_image_url: Optional[str] = None  # Optional real image to use as base
     character_image_urls: list[str] = field(default_factory=list)  # Character/headshot/sprite references
-
-
-@dataclass
-class WorkerJobPayload:
-    """Payload sent to worker for processing"""
-    job_id: str
-    title: str
-    outcome: str
-    original_bet_link: str
-    duration_seconds: int = 8
-
-
+    character_queries: list[str] = field(default_factory=list)  # Search terms (e.g., "tiger", "sam darnold headshot")
 @dataclass
 class JobStatus:
     status: Optional[Literal["done", "waiting", "error"]]

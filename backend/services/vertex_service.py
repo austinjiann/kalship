@@ -49,7 +49,7 @@ class VertexService:
         logger.info(f"Calling Veo with 1 start image ({len(image_data)} bytes)")
         image_mime = _infer_mime_type(image_data)
 
-        model_id = "veo-3.1-fast-generate-001"
+        model_id = "veo-3.1-generate-001"
         effective_duration_seconds = duration_seconds
         aspect_ratio = "9:16"
         prompt_for_video = prompt
@@ -78,16 +78,30 @@ class VertexService:
                     len(character_images),
                 )
 
-            reference_images = [
-                {
-                    "image": Image(
-                        image_bytes=ref,
-                        mime_type=_infer_mime_type(ref),
-                    ),
-                    "reference_type": "asset",
-                }
-                for ref in limited_refs
-            ]
+            try:
+                from google.genai.types import VideoGenerationReferenceImage  # type: ignore
+
+                reference_images = [
+                    VideoGenerationReferenceImage(
+                        image=Image(
+                            image_bytes=ref,
+                            mime_type=_infer_mime_type(ref),
+                        ),
+                        reference_type="asset",
+                    )
+                    for ref in limited_refs
+                ]
+            except Exception:
+                reference_images = [
+                    {
+                        "image": Image(
+                            image_bytes=ref,
+                            mime_type=_infer_mime_type(ref),
+                        ),
+                        "reference_type": "asset",
+                    }
+                    for ref in limited_refs
+                ]
             config_kwargs["reference_images"] = reference_images
             config_kwargs["duration_seconds"] = effective_duration_seconds
             config_kwargs["aspect_ratio"] = aspect_ratio
@@ -113,6 +127,7 @@ REFERENCE MODE CONSTRAINT:
             ),
             config=GenerateVideosConfig(**config_kwargs),
         )
+        logger.info("Veo request submitted with model=%s", model_id)
         return operation
     
     async def generate_image_from_prompt(

@@ -1,11 +1,12 @@
 import asyncio
 import json
 import logging
+import re
 import traceback
 import uuid
 from datetime import datetime
 from typing import Optional
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 import aiohttp
 from google.cloud import storage
@@ -25,7 +26,10 @@ IMAGE_REQUEST_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     ),
     "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
+
+MAX_CHARACTER_IMAGES = 3
 
 
 def _unwrap_image_url(url: str) -> str:
@@ -58,44 +62,241 @@ def _looks_like_image(data: bytes) -> bool:
     return False
 
 
-async def fetch_image_from_url(url: str) -> Optional[bytes]:
-    """Fetch image bytes from URL."""
+def _extract_image_candidates_from_html(html_text: str, base_url: str) -> list[str]:
+    """Extract likely image asset URLs from an HTML page."""
+    patterns = [
+        r'<meta[^>]+property=["\']og:image["\'][^>]*content=["\']([^"\']+)["\']',
+        r'<meta[^>]+name=["\']twitter:image(?::src)?["\'][^>]*content=["\']([^"\']+)["\']',
+        r'<meta[^>]+itemprop=["\']image["\'][^>]*content=["\']([^"\']+)["\']',
+        r'<link[^>]+rel=["\']image_src["\'][^>]*href=["\']([^"\']+)["\']',
+        r'<img[^>]+src=["\']([^"\']+)["\']',
+        r'<img[^>]+data-src=["\']([^"\']+)["\']',
+    ]
+
+    candidates: list[str] = []
+    for pattern in patterns:
+        for match in re.findall(pattern, html_text, flags=re.IGNORECASE):
+            candidate = _unwrap_image_url(urljoin(base_url, match.strip()))
+            if candidate and candidate not in candidates:
+                candidates.append(candidate)
+            if len(candidates) >= 12:
+                return candidates
+    return candidates
+
+
+async def _fetch_image_bytes(
+    session: aiohttp.ClientSession,
+    url: str,
+    *,
+    depth: int = 0,
+    visited: set[str] | None = None,
+) -> Optional[bytes]:
     target_url = _unwrap_image_url(url)
     if not target_url:
         return None
 
+    if visited is None:
+        visited = set()
+    if target_url in visited:
+        return None
+    visited.add(target_url)
+
+    parsed = urlparse(target_url)
+    request_headers = {
+        **IMAGE_REQUEST_HEADERS,
+        "Referer": f"{parsed.scheme}://{parsed.netloc}/" if parsed.scheme and parsed.netloc else "",
+    }
+
     try:
-        async with aiohttp.ClientSession(headers=IMAGE_REQUEST_HEADERS) as session:
-            async with session.get(
-                target_url,
-                timeout=aiohttp.ClientTimeout(total=15),
-                allow_redirects=True,
-            ) as response:
-                if response.status != 200:
+        async with session.get(
+            target_url,
+            timeout=aiohttp.ClientTimeout(total=15),
+            allow_redirects=True,
+            headers=request_headers,
+        ) as response:
+            if response.status != 200:
+                print(f"Failed to fetch image from {target_url}: HTTP {response.status}", flush=True)
+                return None
+
+            payload = await response.read()
+            content_type = (response.headers.get("Content-Type") or "").lower()
+            if content_type.startswith("image/") or _looks_like_image(payload):
+                return payload
+
+            # Fallback: page URL provided instead of direct image URL.
+            if depth < 1 and ("text/html" in content_type or payload[:16].lstrip().startswith(b"<")):
+                html_text = payload.decode("utf-8", errors="ignore")
+                candidates = _extract_image_candidates_from_html(html_text, target_url)
+                if candidates:
                     print(
-                        f"Failed to fetch image from {target_url}: HTTP {response.status}",
+                        f"Resolved {len(candidates)} image candidate(s) from page URL: {target_url}",
                         flush=True,
                     )
-                    return None
+                for candidate_url in candidates:
+                    img = await _fetch_image_bytes(
+                        session,
+                        candidate_url,
+                        depth=depth + 1,
+                        visited=visited,
+                    )
+                    if img:
+                        return img
 
-                image_data = await response.read()
-                content_type = (response.headers.get("Content-Type") or "").lower()
-                if content_type.startswith("image/") or _looks_like_image(image_data):
-                    return image_data
+            preview = payload[:120].decode(errors="ignore").replace("\n", " ")
+            print(
+                (
+                    "Fetched non-image content "
+                    f"from {target_url}: Content-Type={content_type or 'unknown'}, "
+                    f"preview={preview}"
+                ),
+                flush=True,
+            )
+            return None
+    except Exception as exc:
+        print(f"Failed to fetch image from {target_url}: {exc}", flush=True)
+        return None
 
-                preview = image_data[:120].decode(errors="ignore").replace("\n", " ")
-                print(
-                    (
-                        "Fetched non-image content "
-                        f"from {target_url}: Content-Type={content_type or 'unknown'}, "
-                        f"preview={preview}"
-                    ),
-                    flush=True,
-                )
-                return None
-    except Exception as e:
-        print(f"Failed to fetch image from {target_url}: {e}", flush=True)
-    return None
+
+async def fetch_image_from_url(url: str) -> Optional[bytes]:
+    """Fetch image bytes from URL."""
+    async with aiohttp.ClientSession(headers=IMAGE_REQUEST_HEADERS) as session:
+        return await _fetch_image_bytes(session, url)
+
+
+def _is_probable_url(value: str) -> bool:
+    parsed = urlparse((value or "").strip())
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+async def _resolve_query_to_image_urls(
+    session: aiohttp.ClientSession,
+    query: str,
+    *,
+    limit: int = 3,
+) -> list[str]:
+    """
+    Resolve a text query to likely image URLs using Wikimedia Commons search.
+    This avoids brittle full-page scraping for generic entities like animals/objects.
+    """
+    q = (query or "").strip()
+    if not q:
+        return []
+
+    endpoint = "https://commons.wikimedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "generator": "search",
+        "gsrsearch": q,
+        "gsrnamespace": "6",  # File namespace
+        "gsrlimit": "8",
+        "prop": "imageinfo",
+        "iiprop": "url|mime",
+        "format": "json",
+        "formatversion": "2",
+    }
+
+    try:
+        async with session.get(
+            endpoint,
+            params=params,
+            timeout=aiohttp.ClientTimeout(total=4),
+            headers=IMAGE_REQUEST_HEADERS,
+        ) as response:
+            if response.status != 200:
+                print(f"Wikimedia query failed for '{q}': HTTP {response.status}", flush=True)
+                return []
+
+            payload = await response.json(content_type=None)
+    except Exception as exc:
+        print(f"Wikimedia query failed for '{q}': {exc}", flush=True)
+        return []
+
+    urls: list[str] = []
+    pages = (payload or {}).get("query", {}).get("pages", []) or []
+    for page in pages:
+        for info in page.get("imageinfo", []) or []:
+            mime = (info.get("mime") or "").lower()
+            url = (info.get("url") or "").strip()
+            if not url or not mime.startswith("image/"):
+                continue
+            if url not in urls:
+                urls.append(url)
+            if len(urls) >= limit:
+                return urls
+    return urls
+
+
+async def _load_character_images(
+    character_image_urls: list[str],
+    character_queries: list[str],
+) -> tuple[list[bytes], list[str]]:
+    """
+    Resolve character image sources and fetch bytes with parallel best-effort retrieval.
+    Returns (image_bytes, resolved_source_urls).
+    """
+    unique_urls: list[str] = []
+    for url in character_image_urls:
+        u = _unwrap_image_url(url)
+        if u and u not in unique_urls:
+            unique_urls.append(u)
+
+    query_terms: list[str] = []
+    for q in character_queries:
+        normalized = (q or "").strip()
+        if normalized and normalized not in query_terms:
+            query_terms.append(normalized)
+    query_terms = query_terms[:5]
+
+    async with aiohttp.ClientSession(headers=IMAGE_REQUEST_HEADERS) as session:
+        # Resolve text queries first.
+        if query_terms:
+            query_tasks = [
+                asyncio.create_task(_resolve_query_to_image_urls(session, query, limit=3))
+                for query in query_terms
+            ]
+            try:
+                results = await asyncio.gather(*query_tasks, return_exceptions=True)
+                for result in results:
+                    try:
+                        if isinstance(result, Exception):
+                            raise result
+                        for resolved_url in result:
+                            if resolved_url not in unique_urls:
+                                unique_urls.append(resolved_url)
+                    except Exception as exc:
+                        print(f"Character query resolution task failed: {exc}", flush=True)
+            finally:
+                for task in query_tasks:
+                    if not task.done():
+                        task.cancel()
+
+        if not unique_urls:
+            return [], []
+        # Keep resolver bounded even if callers pass many URLs/queries.
+        unique_urls = unique_urls[:18]
+
+        fetch_tasks: list[tuple[str, asyncio.Task]] = [
+            (url, asyncio.create_task(_fetch_image_bytes(session, url)))
+            for url in unique_urls
+        ]
+        pending: set[asyncio.Task] = {task for _, task in fetch_tasks}
+        loaded_images: list[bytes] = []
+
+        for task in asyncio.as_completed(list(pending)):
+            try:
+                image = await task
+                if image is not None:
+                    loaded_images.append(image)
+                    if len(loaded_images) >= MAX_CHARACTER_IMAGES:
+                        break
+            except Exception as exc:
+                print(f"Character image task failed: {exc}", flush=True)
+
+        for task in pending:
+            if not task.done():
+                task.cancel()
+
+    return loaded_images, unique_urls
 
 
 class JobService:
@@ -244,6 +445,7 @@ class JobService:
                 "shorts_style": request.shorts_style,
                 "source_image_url": request.source_image_url,
                 "character_image_urls": request.character_image_urls,
+                "character_queries": request.character_queries,
             },
         )
 
@@ -255,6 +457,7 @@ class JobService:
             "shorts_style": request.shorts_style,
             "source_image_url": request.source_image_url,
             "character_image_urls": request.character_image_urls,
+            "character_queries": request.character_queries,
         }
 
         if self.cloud_tasks:
@@ -280,11 +483,43 @@ class JobService:
             duration = int(job_data.get("duration_seconds", 8))
             shorts_style = normalize_shorts_style(job_data.get("shorts_style"))
             source_image_url = job_data.get("source_image_url")
-            character_image_urls = (
+            raw_character_sources = (
                 job_data.get("character_image_urls")
                 or job_data.get("reference_image_urls")
                 or []
             )
+            if isinstance(raw_character_sources, str):
+                raw_character_sources = [
+                    item.strip()
+                    for row in raw_character_sources.replace("\r", "\n").split("\n")
+                    for item in row.split(",")
+                    if item.strip()
+                ]
+            explicit_character_queries_raw = job_data.get("character_queries") or []
+            if isinstance(explicit_character_queries_raw, str):
+                explicit_character_queries = [
+                    term.strip()
+                    for row in explicit_character_queries_raw.replace("\r", "\n").split("\n")
+                    for term in row.split(",")
+                    if term.strip()
+                ]
+            else:
+                explicit_character_queries = [
+                    str(term).strip()
+                    for term in explicit_character_queries_raw
+                    if str(term).strip()
+                ]
+
+            character_image_urls = [str(s).strip() for s in raw_character_sources if _is_probable_url(str(s))]
+            inferred_character_queries = [
+                str(s).strip()
+                for s in raw_character_sources
+                if str(s).strip() and not _is_probable_url(str(s))
+            ]
+            character_queries = [
+                q for q in (explicit_character_queries + inferred_character_queries)
+                if str(q).strip()
+            ]
 
             # Fetch source image if URL provided
             source_image = None
@@ -293,24 +528,31 @@ class JobService:
                 if source_image:
                     print(f"[{jid}] Using source image ({len(source_image)} bytes)", flush=True)
 
-            # Fetch character reference images in parallel
+            # Fetch character reference images and optional query-derived assets within budget.
             character_images = []
-            if character_image_urls:
+            if character_image_urls or character_queries:
                 print(f"[{jid}] Character URLs received: {character_image_urls}", flush=True)
-                print(f"[{jid}] Fetching {len(character_image_urls)} character image(s)...", flush=True)
-                fetch_tasks = [fetch_image_from_url(url) for url in character_image_urls]
-                results = await asyncio.gather(*fetch_tasks)
-                character_images = [img for img in results if img is not None]
-                print(f"[{jid}] Successfully loaded {len(character_images)}/{len(character_image_urls)} character image(s)", flush=True)
+                if character_queries:
+                    print(f"[{jid}] Character queries received: {character_queries}", flush=True)
+                expected_sources = len(character_image_urls) + len(character_queries)
+                print(f"[{jid}] Resolving/fetching character assets...", flush=True)
+                character_images, resolved_sources = await _load_character_images(
+                    character_image_urls=character_image_urls,
+                    character_queries=character_queries,
+                )
+                print(
+                    f"[{jid}] Successfully loaded {len(character_images)} character image(s) from {len(resolved_sources)} source URL candidate(s)",
+                    flush=True,
+                )
                 if not character_images:
                     raise ValueError(
-                        "None of the character image URLs were fetchable as real images. "
-                        "Use direct public JPG/PNG/WebP links, not search/result page URLs."
+                        "No character assets could be resolved from the provided URLs/queries. "
+                        "Provide direct image URLs or add better character queries."
                     )
-                if len(character_images) < len(character_image_urls):
-                    print(f"[{jid}] WARNING: Some character images failed to fetch!", flush=True)
+                if len(character_images) < min(expected_sources, MAX_CHARACTER_IMAGES):
+                    print(f"[{jid}] WARNING: Some character assets failed to resolve/fetch.", flush=True)
             else:
-                print(f"[{jid}] No character image URLs provided", flush=True)
+                print(f"[{jid}] No character image URLs or queries provided", flush=True)
 
             # Generate first frame (from source image + character images if available)
             first_prompt = create_first_image_prompt(
@@ -366,6 +608,7 @@ class JobService:
                 "original_bet_link": job_data.get("original_bet_link"),
                 "duration_seconds": int(job_data.get("duration_seconds", 8)),
                 "shorts_style": normalize_shorts_style(job_data.get("shorts_style")),
+                "character_queries": job_data.get("character_queries") or [],
             })
 
     async def get_job_status(self, job_id: str) -> Optional[JobStatus]:
