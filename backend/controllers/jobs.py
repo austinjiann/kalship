@@ -1,5 +1,4 @@
 # Job controller for video generation pipeline
-import json as json_lib
 import logging
 from datetime import datetime
 
@@ -7,6 +6,7 @@ from blacksheep import json, Response
 from blacksheep.server.controllers import APIController, post, get
 from services.job_service import JobService
 from models.job import VideoJobRequest
+from utils.shorts_style import normalize_shorts_style
 
 logger = logging.getLogger("jobs_controller")
 
@@ -18,11 +18,19 @@ class Jobs(APIController):
         self.job_service = job_service
 
     def _coerce_payload(self, payload: dict) -> dict:
-        # Handle reference_image_urls - can be list or comma-separated string
-        ref_urls = payload.get("reference_image_urls") or payload.get("referenceImageUrls") or []
-        if isinstance(ref_urls, str):
-            rows = ref_urls.replace("\r", "\n").split("\n")
-            ref_urls = [
+        # Handle character image URLs (new key + legacy aliases).
+        char_urls = (
+            payload.get("character_image_urls")
+            or payload.get("characterImageUrls")
+            or payload.get("reference_image_urls")
+            or payload.get("referenceImageUrls")
+            or payload.get("additional_image_urls")
+            or payload.get("additionalImageUrls")
+            or []
+        )
+        if isinstance(char_urls, str):
+            rows = char_urls.replace("\r", "\n").split("\n")
+            char_urls = [
                 url.strip()
                 for row in rows
                 for url in row.split(",")
@@ -41,8 +49,14 @@ class Jobs(APIController):
                 or payload.get("bet")
             ),
             "duration_seconds": payload.get("duration_seconds", 8),
+            "shorts_style": (
+                payload.get("shorts_style")
+                or payload.get("shortsStyle")
+                or payload.get("style")
+                or payload.get("format")
+            ),
             "source_image_url": payload.get("source_image_url") or payload.get("sourceImageUrl"),
-            "reference_image_urls": ref_urls,
+            "character_image_urls": char_urls,
         }
 
     @post("/create")
@@ -98,16 +112,20 @@ class Jobs(APIController):
         except Exception:
             duration_seconds = 6
 
+        shorts_style = normalize_shorts_style(payload.get("shorts_style"))
         source_image_url = (payload.get("source_image_url") or "").strip() or None
-        reference_image_urls = [u for u in payload.get("reference_image_urls", []) if u]
+        character_image_urls = [u for u in payload.get("character_image_urls", []) if u]
+        log_api("/create", f"Shorts style: {shorts_style}")
+        log_api("/create", f"Character image URLs: {len(character_image_urls)}")
 
         job_request = VideoJobRequest(
             title=title,
             outcome=outcome,
             original_bet_link=original_bet_link,
             duration_seconds=max(5, min(duration_seconds, 8)),
+            shorts_style=shorts_style,
             source_image_url=source_image_url,
-            reference_image_urls=reference_image_urls,
+            character_image_urls=character_image_urls,
         )
 
         log_api("/create", f"Creating video job (duration={job_request.duration_seconds}s)...")

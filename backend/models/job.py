@@ -9,8 +9,9 @@ class VideoJobRequest:
     outcome: str
     original_bet_link: str
     duration_seconds: int = 8
+    shorts_style: str = "action_commentary"
     source_image_url: Optional[str] = None  # Optional real image to use as base
-    reference_image_urls: list[str] = field(default_factory=list)  # Additional reference images
+    character_image_urls: list[str] = field(default_factory=list)  # Character/headshot/sprite references
 
 
 @dataclass

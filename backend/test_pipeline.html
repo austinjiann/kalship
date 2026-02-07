@@ -23,7 +23,7 @@
             margin-bottom: 4px;
             color: #aaa;
         }
-        input, textarea {
+        input, textarea, select {
             width: 100%;
             padding: 12px;
             border: 1px solid #333;
@@ -170,6 +170,15 @@
         </div>
 
         <div class="form-group">
+            <label for="shortsStyle">Shorts Style</label>
+            <select id="shortsStyle">
+                <option value="action_commentary" selected>Action + Commentary (no music)</option>
+                <option value="vibe_music_edit">Vibe Music Edit (music only)</option>
+                <option value="fantasy_ai_gen">Fantasy AI-Gen Art (orchestral ambient)</option>
+            </select>
+        </div>
+
+        <div class="form-group">
             <label for="sourceImageUrl">Source Image URL (optional - main image to use as base)</label>
             <input
                 type="url"
@@ -180,15 +189,15 @@
         </div>
 
         <div class="form-group">
-            <label for="referenceImageUrls">Reference Image URLs (optional - for uniforms, players, style)</label>
+            <label for="characterImageUrls">Character Image URLs (optional - headshots, sprites, mascots, avatars)</label>
             <textarea
-                id="referenceImageUrls"
+                id="characterImageUrls"
                 placeholder="https://i.imgur.com/example1.jpg
 https://pbs.twimg.com/media/example2.png"
                 style="min-height: 60px;"
             >https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/4430878.png&w=350&h=254
 https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png&w=350&h=254</textarea>
-            <small style="color: #666;">Direct image URLs only (.jpg, .png) - one per line. Right-click an image -> "Copy image address"</small>
+            <small style="color: #666;">Use direct public image URLs only (JPG/PNG/WebP), one per line. Avoid Google search-result page URLs.</small>
         </div>
 
         <button type="submit" id="submitBtn">Start Job</button>
@@ -273,12 +282,13 @@ https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png&w
             const outcome = document.getElementById('outcome').value;
             const originalBetLink = document.getElementById('originalBetLink').value;
             const duration = parseInt(document.getElementById('duration').value) || 8;
+            const shortsStyle = document.getElementById('shortsStyle').value;
             const sourceImageUrl = document.getElementById('sourceImageUrl').value.trim() || null;
 
-            // Parse reference image URLs (supports comma or newline separated)
-            const refUrlsRaw = document.getElementById('referenceImageUrls').value.trim();
-            const referenceImageUrls = refUrlsRaw
-                ? refUrlsRaw.split(/[,\n]/).map(u => u.trim()).filter(u => u)
+            // Parse character image URLs (supports comma or newline separated)
+            const charUrlsRaw = document.getElementById('characterImageUrls').value.trim();
+            const characterImageUrls = charUrlsRaw
+                ? charUrlsRaw.split(/[,\n]/).map(u => u.trim()).filter(u => u)
                 : [];
 
             submitBtn.disabled = true;
@@ -300,8 +310,9 @@ https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png&w
             log(`Title: ${title}`, 'info');
             log(`Outcome: ${outcome.substring(0, 50)}...`, 'info');
             log(`Bet Link: ${originalBetLink}`, 'info');
-            if (referenceImageUrls.length > 0) {
-                log(`Reference images: ${referenceImageUrls.length} URL(s)`, 'info');
+            log(`Shorts style: ${shortsStyle}`, 'info');
+            if (characterImageUrls.length > 0) {
+                log(`Character images: ${characterImageUrls.length} URL(s)`, 'info');
             }
 
             try {
@@ -316,8 +327,9 @@ https://a.espncdn.com/combiner/i?img=/i/headshots/nfl/players/full/3912547.png&w
                         outcome,
                         original_bet_link: originalBetLink,
                         duration_seconds: duration,
+                        shorts_style: shortsStyle,
                         source_image_url: sourceImageUrl,
-                        reference_image_urls: referenceImageUrls
+                        character_image_urls: characterImageUrls
                     })
                 });
 

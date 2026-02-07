@@ -42,14 +42,14 @@ class VertexService:
         prompt: str,
         image_data: bytes,
         duration_seconds: int = 8,
-        reference_images: list[bytes] | None = None,
+        character_images: list[bytes] | None = None,
     ) -> GenerateVideosOperation:
         output_gcs_uri = f"gs://{self.bucket_name}/videos/"
 
-        # Veo only supports one conditioning image. Gemini composes references into this start frame first.
+        # Veo only supports one conditioning image. Gemini composes character references into this start frame first.
         logger.info(f"Calling Veo with 1 input image ({len(image_data)} bytes)")
-        if reference_images:
-            logger.info(f"Reference image count used to build start frame: {len(reference_images)}")
+        if character_images:
+            logger.info(f"Character image count used to build start frame: {len(character_images)}")
         image_mime = _infer_mime_type(image_data)
 
         operation = self.client.models.generate_videos(
@@ -76,7 +76,7 @@ class VertexService:
         self,
         prompt: str,
         image: bytes | None = None,
-        reference_images: list[bytes] | None = None,
+        character_images: list[bytes] | None = None,
     ) -> bytes:
         if not prompt:
             raise ValueError("prompt is required")
@@ -88,26 +88,27 @@ class VertexService:
             logger.info(f"Adding source image ({len(image)} bytes) to Gemini request")
             contents.append(Part.from_bytes(data=image, mime_type=_infer_mime_type(image)))
 
-        # Add reference images for additional context
-        if reference_images:
-            logger.info(f"Adding {len(reference_images)} reference image(s) to Gemini request")
-            for i, ref_img in enumerate(reference_images):
-                logger.info(f"  Reference image {i+1}: {len(ref_img)} bytes")
+        # Add character images for identity context
+        if character_images:
+            logger.info(f"Adding {len(character_images)} character image(s) to Gemini request")
+            for i, ref_img in enumerate(character_images):
+                logger.info(f"  Character image {i+1}: {len(ref_img)} bytes")
                 contents.append(Part.from_bytes(data=ref_img, mime_type=_infer_mime_type(ref_img)))
         else:
-            logger.info("No reference images provided to Gemini")
+            logger.info("No character images provided to Gemini")
 
         # Build strict image-conditioning instructions based on supplied images.
-        if image and reference_images:
+        if image and character_images:
             enhanced_prompt = f"""{prompt}
 
 IMAGE USAGE INSTRUCTIONS:
 - IMAGE 1 is the ACTION AND COMPOSITION anchor.
-- IMAGES 2+ are IDENTITY anchors.
+- IMAGES 2+ are CHARACTER IDENTITY anchors.
 
 HARD CONSTRAINTS:
 - Faces from IMAGES 2+ must match exactly (facial structure, skin tone, hairline, age range).
 - Do not merge identities, swap faces, or invent new primary subjects.
+- Keep each character as a distinct person on screen (no blended faces).
 - Keep uniform/team styling from IMAGE 1 when visible.
 - Preserve high-energy motion pose from IMAGE 1.
 - Scene must clearly depict the selected outcome as true."""
@@ -121,12 +122,13 @@ Use the provided action image as reference for:
 - Stadium atmosphere
 
 Create a cinematic, action-heavy frame that can cleanly animate into an intense short clip."""
-        elif reference_images:
+        elif character_images:
             enhanced_prompt = f"""{prompt}
 
-The provided images are IDENTITY references.
-- The main subjects must match these faces exactly.
-- Build a dynamic, action-first scene around these people.
+The provided images are CHARACTER references.
+- Use all provided identities as the main subjects.
+- Faces must match exactly.
+- Build a dynamic scene around these people.
 - No face morphing, no identity swaps."""
         else:
             enhanced_prompt = prompt

@@ -3,8 +3,9 @@ import json
 import logging
 import traceback
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
+from urllib.parse import parse_qs, unquote, urlparse
 
 import aiohttp
 from google.cloud import storage
@@ -13,20 +14,87 @@ from models.job import JobStatus, VideoJobRequest
 from services.vertex_service import VertexService
 from utils.env import settings
 from utils.gemini_prompt_builder import create_first_image_prompt
+from utils.shorts_style import normalize_shorts_style
 from utils.veo_prompt_builder import create_video_prompt
 
 logger = logging.getLogger("job_service")
 
+IMAGE_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+}
+
+
+def _unwrap_image_url(url: str) -> str:
+    """Extract a direct image URL from common wrappers (e.g., Google image result links)."""
+    cleaned = (url or "").strip()
+    if not cleaned:
+        return ""
+
+    parsed = urlparse(cleaned)
+    if parsed.netloc in {"www.google.com", "google.com"} and parsed.path.startswith("/imgres"):
+        imgurl = parse_qs(parsed.query).get("imgurl", [None])[0]
+        if imgurl:
+            return unquote(imgurl)
+    return cleaned
+
+
+def _looks_like_image(data: bytes) -> bool:
+    if not data:
+        return False
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    if data.startswith(b"\xff\xd8\xff"):
+        return True
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return True
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return True
+    if len(data) > 12 and data[4:12] == b"ftypavif":
+        return True
+    return False
+
 
 async def fetch_image_from_url(url: str) -> Optional[bytes]:
     """Fetch image bytes from URL."""
+    target_url = _unwrap_image_url(url)
+    if not target_url:
+        return None
+
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
-                if response.status == 200:
-                    return await response.read()
+        async with aiohttp.ClientSession(headers=IMAGE_REQUEST_HEADERS) as session:
+            async with session.get(
+                target_url,
+                timeout=aiohttp.ClientTimeout(total=15),
+                allow_redirects=True,
+            ) as response:
+                if response.status != 200:
+                    print(
+                        f"Failed to fetch image from {target_url}: HTTP {response.status}",
+                        flush=True,
+                    )
+                    return None
+
+                image_data = await response.read()
+                content_type = (response.headers.get("Content-Type") or "").lower()
+                if content_type.startswith("image/") or _looks_like_image(image_data):
+                    return image_data
+
+                preview = image_data[:120].decode(errors="ignore").replace("\n", " ")
+                print(
+                    (
+                        "Fetched non-image content "
+                        f"from {target_url}: Content-Type={content_type or 'unknown'}, "
+                        f"preview={preview}"
+                    ),
+                    flush=True,
+                )
+                return None
     except Exception as e:
-        print(f"Failed to fetch image from {url}: {e}", flush=True)
+        print(f"Failed to fetch image from {target_url}: {e}", flush=True)
     return None
 
 
@@ -173,8 +241,9 @@ class JobService:
                 "outcome": request.outcome,
                 "original_bet_link": request.original_bet_link,
                 "duration_seconds": request.duration_seconds,
+                "shorts_style": request.shorts_style,
                 "source_image_url": request.source_image_url,
-                "reference_image_urls": request.reference_image_urls,
+                "character_image_urls": request.character_image_urls,
             },
         )
 
@@ -183,8 +252,9 @@ class JobService:
             "outcome": request.outcome,
             "original_bet_link": request.original_bet_link,
             "duration_seconds": request.duration_seconds,
+            "shorts_style": request.shorts_style,
             "source_image_url": request.source_image_url,
-            "reference_image_urls": request.reference_image_urls,
+            "character_image_urls": request.character_image_urls,
         }
 
         if self.cloud_tasks:
@@ -208,8 +278,13 @@ class JobService:
                 raise ValueError("outcome is required")
             original_bet_link = job_data["original_bet_link"]
             duration = int(job_data.get("duration_seconds", 8))
+            shorts_style = normalize_shorts_style(job_data.get("shorts_style"))
             source_image_url = job_data.get("source_image_url")
-            reference_image_urls = job_data.get("reference_image_urls", [])
+            character_image_urls = (
+                job_data.get("character_image_urls")
+                or job_data.get("reference_image_urls")
+                or []
+            )
 
             # Fetch source image if URL provided
             source_image = None
@@ -218,30 +293,36 @@ class JobService:
                 if source_image:
                     print(f"[{jid}] Using source image ({len(source_image)} bytes)", flush=True)
 
-            # Fetch reference images in parallel
-            reference_images = []
-            if reference_image_urls:
-                print(f"[{jid}] Reference URLs received: {reference_image_urls}", flush=True)
-                print(f"[{jid}] Fetching {len(reference_image_urls)} reference image(s)...", flush=True)
-                fetch_tasks = [fetch_image_from_url(url) for url in reference_image_urls]
+            # Fetch character reference images in parallel
+            character_images = []
+            if character_image_urls:
+                print(f"[{jid}] Character URLs received: {character_image_urls}", flush=True)
+                print(f"[{jid}] Fetching {len(character_image_urls)} character image(s)...", flush=True)
+                fetch_tasks = [fetch_image_from_url(url) for url in character_image_urls]
                 results = await asyncio.gather(*fetch_tasks)
-                reference_images = [img for img in results if img is not None]
-                print(f"[{jid}] Successfully loaded {len(reference_images)}/{len(reference_image_urls)} reference image(s)", flush=True)
-                if len(reference_images) < len(reference_image_urls):
-                    print(f"[{jid}] WARNING: Some reference images failed to fetch!", flush=True)
+                character_images = [img for img in results if img is not None]
+                print(f"[{jid}] Successfully loaded {len(character_images)}/{len(character_image_urls)} character image(s)", flush=True)
+                if not character_images:
+                    raise ValueError(
+                        "None of the character image URLs were fetchable as real images. "
+                        "Use direct public JPG/PNG/WebP links, not search/result page URLs."
+                    )
+                if len(character_images) < len(character_image_urls):
+                    print(f"[{jid}] WARNING: Some character images failed to fetch!", flush=True)
             else:
-                print(f"[{jid}] No reference image URLs provided", flush=True)
+                print(f"[{jid}] No character image URLs provided", flush=True)
 
-            # Generate first frame (from source image + reference images if available)
+            # Generate first frame (from source image + character images if available)
             first_prompt = create_first_image_prompt(
                 title=title,
                 outcome=outcome,
                 original_bet_link=original_bet_link,
+                shorts_style=shorts_style,
             )
             first_image = await self.vertex_service.generate_image_from_prompt(
                 prompt=first_prompt,
                 image=source_image,
-                reference_images=reference_images if reference_images else None,
+                character_images=character_images if character_images else None,
             )
 
             image_uri = ""
@@ -252,12 +333,13 @@ class JobService:
                 title=title,
                 outcome=outcome,
                 original_bet_link=original_bet_link,
+                shorts_style=shorts_style,
             )
             operation = await self.vertex_service.generate_video_content(
                 prompt=veo_prompt,
                 image_data=first_image,
                 duration_seconds=duration,
-                reference_images=reference_images if reference_images else None,
+                character_images=character_images if character_images else None,
             )
 
             await self._save_job(job_id, {
@@ -268,6 +350,7 @@ class JobService:
                 "outcome": outcome,
                 "original_bet_link": original_bet_link,
                 "duration_seconds": duration,
+                "shorts_style": shorts_style,
                 "image_uri": image_uri,
             })
             print(f"[{jid}] Video processing started", flush=True)
@@ -282,6 +365,7 @@ class JobService:
                 "outcome": job_data.get("outcome") or job_data.get("caption"),
                 "original_bet_link": job_data.get("original_bet_link"),
                 "duration_seconds": int(job_data.get("duration_seconds", 8)),
+                "shorts_style": normalize_shorts_style(job_data.get("shorts_style")),
             })
 
     async def get_job_status(self, job_id: str) -> Optional[JobStatus]:
