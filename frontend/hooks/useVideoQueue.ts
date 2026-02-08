@@ -2,19 +2,11 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { QueueItem, FeedItem } from '@/types'
+import { VIDEO_IDS } from '@/mystery'
 
 const STORAGE_KEY = 'video_queue'
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const BATCH_SIZE = 10
-
-export const HARDCODED_VIDEO_IDS = [
-  "vHaPgrSMlI0",
-  "HZOkwNsYFdo",
-  "w1rbnM6A4AA",
-  "_qW6a1A9gb0",
-  "3fQhDJlRJYg",
-  "LQ8uCvKYu3Y",
-]
 
 function loadFromStorage(): QueueItem[] {
   if (typeof window === 'undefined') return []
@@ -44,7 +36,7 @@ export function useVideoQueue() {
     if (stored.length > 0) {
       setQueue(stored)
     } else {
-      const initial: QueueItem[] = HARDCODED_VIDEO_IDS.map(id => ({
+      const initial: QueueItem[] = VIDEO_IDS.map(id => ({
         video_id: id,
         status: 'pending',
       }))

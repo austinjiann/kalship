@@ -10,6 +10,7 @@ import { KalshiMarket } from '@/types'
 import { useVideoQueue } from '@/hooks/useVideoQueue'
 
 const CharacterPreview = dynamic(() => import('@/components/CharacterPreview'), { ssr: false })
+const PriceChart = dynamic(() => import('@/components/PriceChart'), { ssr: false })
 
 const TIPS = [
   { text: 'Welcome to my office!', animation: 'wave' as const },
@@ -81,7 +82,8 @@ function SpeechBubble({ text }: { text: string }) {
 
 export default function Home() {
   const { feedItems, stats, isProcessing, processQueue } = useVideoQueue()
-  const [currentMarket, setCurrentMarket] = useState<KalshiMarket | undefined>(undefined)
+  const [currentMarkets, setCurrentMarkets] = useState<KalshiMarket[]>([])
+  const [selectedIdx, setSelectedIdx] = useState(0)
   const [imgError, setImgError] = useState(false)
   const [stage, setStage] = useState(0) // 0-4 = tutorial, 5 = feed
   const [waitingForFeed, setWaitingForFeed] = useState(false)
@@ -122,12 +124,15 @@ export default function Home() {
     }
   }, [waitingForFeed, feedItems.length])
 
+  const expandedMarket = currentMarkets[selectedIdx] as KalshiMarket | undefined
+
   const handleBet = (side: 'YES' | 'NO') => {
-    console.log(`Bet placed: ${side} on ${currentMarket?.ticker}`)
+    console.log(`Bet placed: ${side} on ${expandedMarket?.ticker}`)
   }
 
-  const handleCurrentItemChange = useCallback((item: { kalshi?: KalshiMarket }) => {
-    setCurrentMarket(item.kalshi)
+  const handleCurrentItemChange = useCallback((item: { kalshi?: KalshiMarket[] }) => {
+    setCurrentMarkets(item.kalshi ?? [])
+    setSelectedIdx(0)
     setImgError(false)
   }, [])
 
@@ -142,13 +147,13 @@ export default function Home() {
     return (
       <BgWrapper blurred>
         <motion.div
-          className="relative flex items-center justify-center max-h-screen w-full -mt-4 sm:-mt-6"
+          className="relative flex items-center max-h-screen w-full -mt-4 sm:-mt-6 ml-[3%] gap-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.6 }}
         >
           {/* Character — left of phone */}
-          <div className="absolute right-[calc(50%+210px)] z-20">
+          <div className="flex-shrink-0 z-20 -mr-2">
             <div className="flex flex-col items-center">
               <div className="relative bg-white/95 text-gray-900 rounded-2xl px-4 py-2 max-w-[220px] text-xs font-medium shadow-lg">
                 {FEED_TIP}
@@ -171,69 +176,134 @@ export default function Home() {
             </Iphone>
           </div>
 
-          {currentMarket && (
+          {currentMarkets.length > 0 && expandedMarket && (
             <motion.div
-              className="absolute left-[calc(50%+210px)] w-[320px] rounded-2xl p-4"
+              className="flex flex-col gap-3 w-[500px] flex-shrink-0"
               initial={{ x: 40, opacity: 0, rotate: 2 }}
               animate={{ x: 0, opacity: 1, rotate: 0 }}
               transition={{ duration: 0.5, ease: 'easeOut' }}
-              style={{
-                background: 'rgba(30, 30, 30, 0.88)',
-                backdropFilter: 'blur(20px)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
-                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
-              }}
             >
-              <div className="flex items-start gap-3 mb-3">
-                {currentMarket.image_url && !imgError ? (
-                  <img
-                    src={currentMarket.image_url}
-                    alt=""
-                    className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
-                    onError={() => setImgError(true)}
-                  />
-                ) : (
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                    style={{ background: 'rgba(16, 185, 129, 0.2)' }}
+              {/* Bet card */}
+              <div
+                className="rounded-2xl p-5"
+                style={{
+                  background: 'rgba(30, 30, 30, 0.88)',
+                  backdropFilter: 'blur(20px)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                }}
+              >
+                {/* Expanded market */}
+                <div className="flex items-start gap-3 mb-3">
+                  {expandedMarket.image_url && !imgError ? (
+                    <img
+                      src={expandedMarket.image_url}
+                      alt=""
+                      className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                      onError={() => setImgError(true)}
+                    />
+                  ) : (
+                    <div
+                      className="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0"
+                      style={{ background: 'rgba(16, 185, 129, 0.2)' }}
+                    >
+                      <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6 text-emerald-400">
+                        <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
+                      </svg>
+                    </div>
+                  )}
+                  <p className="text-white/90 text-sm leading-snug flex-1 line-clamp-2">
+                    {expandedMarket.question}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between text-sm">
+                  <a
+                    href={`https://kalshi.com/events/${expandedMarket.event_ticker || expandedMarket.ticker}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-white/50 hover:text-white transition-colors"
                   >
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-emerald-400">
-                      <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
+                    View on Kalshi
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5">
+                      <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
                     </svg>
+                  </a>
+                  <div className="flex gap-2">
+                    <button
+                      className="px-4 py-2 text-sm glass-btn-yes"
+                      onClick={() => handleBet('YES')}
+                    >
+                      Yes {expandedMarket.yes_price != null && <span className="opacity-70">{expandedMarket.yes_price}¢</span>}
+                    </button>
+                    <button
+                      className="px-4 py-2 text-sm glass-btn-no"
+                      onClick={() => handleBet('NO')}
+                    >
+                      No {expandedMarket.no_price != null && <span className="opacity-70">{expandedMarket.no_price}¢</span>}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Scrollable sub-bet rows */}
+                {currentMarkets.length > 1 && (
+                  <div className="mt-3 pt-3 border-t border-white/10 flex flex-col gap-1 max-h-[280px] overflow-y-auto scrollbar-thin">
+                    {currentMarkets.map((m, i) => (
+                      <button
+                        key={m.ticker}
+                        onClick={() => { setSelectedIdx(i); setImgError(false) }}
+                        className="flex items-center justify-between w-full px-3 py-2 rounded-lg text-left transition-colors"
+                        style={{
+                          background: i === selectedIdx ? 'rgba(255,255,255,0.1)' : 'transparent',
+                        }}
+                      >
+                        <span className="text-white/80 text-sm line-clamp-1 flex-1 mr-2">
+                          {m.question}
+                        </span>
+                        <span className="text-emerald-400 text-sm font-medium flex-shrink-0">
+                          {m.yes_price}¢
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
-                <p className="text-white/90 text-xs leading-snug flex-1 line-clamp-2 min-h-[2.5em]">
-                  {currentMarket.question}
-                </p>
               </div>
 
-              <div className="flex items-center justify-between text-xs">
-                <a
-                  href={`https://kalshi.com/events/${currentMarket.event_ticker || currentMarket.ticker}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-white/50 hover:text-white transition-colors"
+              {/* Separated chart card */}
+              {expandedMarket.series_ticker && (
+                <div
+                  className="rounded-2xl p-5"
+                  style={{
+                    background: 'rgba(30, 30, 30, 0.88)',
+                    backdropFilter: 'blur(20px)',
+                    border: '1px solid rgba(255, 255, 255, 0.15)',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                  }}
                 >
-                  View on Kalshi
-                  <svg viewBox="0 0 24 24" fill="currentColor" className="w-3 h-3">
-                    <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/>
-                  </svg>
-                </a>
-                <div className="flex gap-2">
-                  <button
-                    className="px-3 py-1 text-xs glass-btn-yes"
-                    onClick={() => handleBet('YES')}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="px-3 py-1 text-xs glass-btn-no"
-                    onClick={() => handleBet('NO')}
-                  >
-                    No
-                  </button>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-white/40 uppercase tracking-wider">Yes Price</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm text-white/70 font-medium">{expandedMarket.yes_price}¢</span>
+                      {expandedMarket.price_history && expandedMarket.price_history.length > 1 && (() => {
+                        const prices = expandedMarket.price_history!.map(p => p.price)
+                        const trending = prices[prices.length - 1] >= prices[0]
+                        const diff = prices[prices.length - 1] - prices[0]
+                        return (
+                          <span className={`text-xs font-medium ${trending ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {trending ? '+' : ''}{diff.toFixed(0)}¢ 24h
+                          </span>
+                        )
+                      })()}
+                    </div>
+                  </div>
+                  <PriceChart
+                    key={expandedMarket.ticker}
+                    ticker={expandedMarket.ticker}
+                    seriesTicker={expandedMarket.series_ticker}
+                    priceHistory={expandedMarket.price_history}
+                  />
                 </div>
-              </div>
+              )}
             </motion.div>
           )}
         </motion.div>
@@ -256,7 +326,7 @@ export default function Home() {
         >
           <div className="relative flex flex-col items-center">
             {/* Speech bubble — positioned near character's head */}
-            <div className="relative w-full flex justify-center mt-8">
+            <div className="relative w-full flex justify-center items-end mt-8 h-[68px]">
               <AnimatePresence mode="wait">
                 <motion.div
                   key={`tip-${stage}-${waitingForFeed}`}
@@ -305,7 +375,7 @@ export default function Home() {
         <AnimatePresence>
           {stage >= 3 && (
             <motion.div
-              className="absolute left-[calc(50%+210px)] w-[320px] rounded-2xl p-4"
+              className="absolute left-[calc(50%+210px)] w-[320px] rounded-2xl p-3"
               initial={{ x: 40, opacity: 0, rotate: 2 }}
               animate={{ x: 0, opacity: 1, rotate: 0 }}
               exit={{ x: 40, opacity: 0 }}
@@ -318,10 +388,10 @@ export default function Home() {
               }}
             >
               {/* Demo bet card content */}
-              <div className="flex items-start gap-3 mb-3">
-                {currentMarket?.image_url && !imgError ? (
+              <div className="flex items-start gap-3 mb-2">
+                {expandedMarket?.image_url && !imgError ? (
                   <img
-                    src={currentMarket.image_url}
+                    src={expandedMarket.image_url}
                     alt=""
                     className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
                     onError={() => setImgError(true)}
@@ -336,16 +406,20 @@ export default function Home() {
                     </svg>
                   </div>
                 )}
-                <p className="text-white/90 text-xs leading-snug flex-1 line-clamp-2 min-h-[2.5em]">
-                  {currentMarket?.question ?? 'Will this event happen by end of month?'}
+                <p className="text-white/90 text-xs leading-snug flex-1 line-clamp-2">
+                  {expandedMarket?.question ?? 'Will this event happen by end of month?'}
                 </p>
               </div>
 
               <div className="flex items-center justify-between text-xs">
                 <span className="text-white/50">View on Kalshi</span>
                 <div className="flex gap-2">
-                  <button className="px-3 py-1 text-xs glass-btn-yes">Yes</button>
-                  <button className="px-3 py-1 text-xs glass-btn-no">No</button>
+                  <button className="px-3 py-1 text-xs glass-btn-yes">
+                    Yes {expandedMarket?.yes_price != null && <span className="opacity-70">{expandedMarket.yes_price}¢</span>}
+                  </button>
+                  <button className="px-3 py-1 text-xs glass-btn-no">
+                    No {expandedMarket?.no_price != null && <span className="opacity-70">{expandedMarket.no_price}¢</span>}
+                  </button>
                 </div>
               </div>
             </motion.div>

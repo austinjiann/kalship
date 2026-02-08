@@ -34,6 +34,8 @@ class FeedService:
         self.youtube_api_key = settings.YOUTUBE_API_KEY
         self.kalshi_api_key = settings.KALSHI_API_KEY
         self.kalshi_private_key = self._load_private_key()
+        self._kalshi_semaphore = asyncio.Semaphore(5)
+        self._session: aiohttp.ClientSession | None = None
 
     def _load_private_key(self):
         with open(settings.KALSHI_PRIVATE_KEY_PATH, "rb") as f:
@@ -61,48 +63,45 @@ class FeedService:
             "Content-Type": "application/json",
         }
 
+    async def _kalshi_get(self, path: str, url: str, params: dict | None = None) -> dict:
+        """Single chokepoint for all Kalshi GET requests with semaphore + retry."""
+        headers = self._get_kalshi_headers("GET", path)
+        for attempt in range(4):
+            async with self._kalshi_semaphore:
+                async with self._session.get(url, params=params, headers=headers) as response:
+                    if response.status == 429 and attempt < 3:
+                        pass  # will sleep after releasing semaphore
+                    else:
+                        response.raise_for_status()
+                        return await response.json()
+            # Sleep OUTSIDE semaphore so other requests can proceed
+            delay = 1.0 * (2 ** attempt)
+            print(f"[kalshi] 429 on {path}, retry {attempt+1} in {delay}s")
+            await asyncio.sleep(delay)
+            headers = self._get_kalshi_headers("GET", path)
+        return {}
+
     async def _get_events(self, status: str = "open", limit: int = 200) -> list[dict]:
         path = "/trade-api/v2/events"
         params = {"status": status, "limit": limit, "with_nested_markets": "true"}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{KALSHI_BASE_URL}/events",
-                params=params,
-                headers=self._get_kalshi_headers("GET", path),
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                return data.get("events", [])
+        data = await self._kalshi_get(path, f"{KALSHI_BASE_URL}/events", params)
+        return data.get("events", [])
 
     async def _get_markets_for_event(
         self, event_ticker: str, status: str = "open", limit: int = 50
     ) -> list[dict]:
         path = "/trade-api/v2/markets"
         params = {"status": status, "limit": limit, "event_ticker": event_ticker}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{KALSHI_BASE_URL}/markets",
-                params=params,
-                headers=self._get_kalshi_headers("GET", path),
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                return data.get("markets", [])
+        data = await self._kalshi_get(path, f"{KALSHI_BASE_URL}/markets", params)
+        return data.get("markets", [])
 
     async def _get_markets_by_series(
         self, series_ticker: str, status: str = "open", limit: int = 50
     ) -> list[dict]:
         path = "/trade-api/v2/markets"
         params = {"status": status, "limit": limit, "series_ticker": series_ticker}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{KALSHI_BASE_URL}/markets",
-                params=params,
-                headers=self._get_kalshi_headers("GET", path),
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                return data.get("markets", [])
+        data = await self._kalshi_get(path, f"{KALSHI_BASE_URL}/markets", params)
+        return data.get("markets", [])
 
     def _detect_series_from_keywords(self, keywords: list[str]) -> Optional[str]:
         keywords_lower = " ".join(keywords).lower()
@@ -117,30 +116,20 @@ class FeedService:
 
     async def _get_event(self, event_ticker: str) -> dict:
         path = f"/trade-api/v2/events/{event_ticker}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{KALSHI_BASE_URL}/events/{event_ticker}",
-                headers=self._get_kalshi_headers("GET", path),
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-                return data.get("event", {})
+        data = await self._kalshi_get(path, f"{KALSHI_BASE_URL}/events/{event_ticker}")
+        return data.get("event", {})
 
     async def _get_event_metadata(self, event_ticker: str) -> dict:
         path = f"/trade-api/v2/events/{event_ticker}/metadata"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"{KALSHI_BASE_URL}/events/{event_ticker}/metadata",
-                headers=self._get_kalshi_headers("GET", path),
-            ) as response:
-                if response.status != 200:
-                    print(f"[metadata] Failed to get metadata for {event_ticker}: {response.status}")
-                    return {}
-                data = await response.json()
-                print(f"[metadata] Raw response for {event_ticker}: {data}")
-                if "event_metadata" in data:
-                    return data["event_metadata"]
-                return data
+        try:
+            data = await self._kalshi_get(path, f"{KALSHI_BASE_URL}/events/{event_ticker}/metadata")
+        except Exception as e:
+            print(f"[metadata] Failed to get metadata for {event_ticker}: {e}")
+            return {}
+        print(f"[metadata] Raw response for {event_ticker}: {data}")
+        if "event_metadata" in data:
+            return data["event_metadata"]
+        return data
 
     async def _resolve_market_image(
         self, event_ticker: str, market_ticker: str, event: dict | None = None
@@ -212,6 +201,40 @@ class FeedService:
 
         # 6. Last resort: use the fallback icon (better than nothing)
         return best_fallback
+
+    async def get_candlesticks(
+        self, series_ticker: str, ticker: str, period_interval: int = 60, hours: int = 24
+    ) -> list[dict]:
+        """Fetch price history for a market. period_interval: 1, 60, or 1440 min."""
+        if not series_ticker or not ticker:
+            return []
+        own_session = self._session is None
+        if own_session:
+            self._session = aiohttp.ClientSession()
+        try:
+            now = int(time.time())
+            start_ts = now - (hours * 3600)
+            path = f"/trade-api/v2/series/{series_ticker}/markets/{ticker}/candlesticks"
+            params = {
+                "start_ts": start_ts,
+                "end_ts": now,
+                "period_interval": period_interval,
+            }
+            data = await self._kalshi_get(
+                path, f"{KALSHI_BASE_URL}/series/{series_ticker}/markets/{ticker}/candlesticks", params
+            )
+            candlesticks = data.get("candlesticks", [])
+            points = []
+            for c in candlesticks:
+                ts = c.get("end_period_ts", 0)
+                price = c.get("price", {}).get("close", 0) or c.get("yes_bid", {}).get("close", 0)
+                if ts and price:
+                    points.append({"ts": ts, "price": price})
+            return points
+        finally:
+            if own_session:
+                await self._session.close()
+                self._session = None
 
     async def _get_channel_thumbnail(self, channel_id: str) -> str:
         url = "https://www.googleapis.com/youtube/v3/channels"
@@ -349,11 +372,45 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
                 "outcome": yes_sub_title.split(",")[0].replace("yes ", "") if yes_sub_title else "",
             }
 
+    async def _build_market_dict(self, market: dict, event: dict, series_ticker: str, keywords: list[str]) -> dict:
+        event_ticker = event.get("event_ticker", "") or market.get("event_ticker", "")
+        ticker = market.get("ticker", "")
+        formatted = await self._format_market_display(market, event, keywords)
+        image = await self._resolve_market_image(event_ticker, ticker, event)
+        price_history = []
+        try:
+            price_history = await self.get_candlesticks(series_ticker, ticker, 60, 24)
+        except Exception as e:
+            print(f"[candlestick] Failed for {ticker}: {e}")
+        return {
+            "ticker": ticker,
+            "event_ticker": event_ticker,
+            "series_ticker": series_ticker,
+            "question": formatted.get("question", ""),
+            "outcome": formatted.get("outcome", ""),
+            "yes_price": market.get("yes_bid", 0),
+            "no_price": market.get("no_bid", 0),
+            "volume": market.get("volume", 0),
+            "image_url": image,
+            "price_history": price_history,
+        }
+
     async def match_video(self, video_id: str) -> Optional[dict]:
+        own_session = self._session is None
+        if own_session:
+            self._session = aiohttp.ClientSession()
+        try:
+            return await self._match_video_inner(video_id)
+        finally:
+            if own_session:
+                await self._session.close()
+                self._session = None
+
+    async def _match_video_inner(self, video_id: str) -> Optional[dict]:
         print(f"[{video_id}] Starting match...")
         metadata = await self.get_video_metadata(video_id)
         print(f"[{video_id}] Title: {metadata.get('title', 'No title')}")
-        
+
         keywords = await self._extract_keywords(metadata["title"], metadata["description"])
         print(f"[{video_id}] Keywords: {keywords}")
 
@@ -363,25 +420,25 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
 
         series = self._detect_series_from_keywords(keywords)
         best_event = {}
-        
+
         if series:
             print(f"[{video_id}] Detected series: {series}")
             markets = await self._get_markets_by_series(series, limit=50)
             print(f"[{video_id}] Markets from series: {len(markets)}")
             if markets:
-                best_market = markets[0]
-                event_ticker = best_market.get("event_ticker", "")
+                event_ticker = markets[0].get("event_ticker", "")
                 if event_ticker:
                     try:
                         best_event = await self._get_event(event_ticker)
                     except Exception:
                         pass
-                print(f"[{video_id}] SUCCESS (series) - Market: {best_market.get('ticker')}")
-                formatted = await self._format_market_display(best_market, best_event, keywords)
-                market_image = await self._resolve_market_image(
-                    event_ticker, best_market.get("ticker", ""), best_event
-                )
-                print(f"[{video_id}] Market image: {market_image}")
+                selected = markets[:10]
+                series_ticker = best_event.get("series_ticker", "")
+                print(f"[{video_id}] SUCCESS (series) - {len(selected)} markets")
+                kalshi_list = await asyncio.gather(*[
+                    self._build_market_dict(m, best_event, series_ticker, keywords)
+                    for m in selected
+                ])
                 return {
                     "youtube": {
                         "video_id": video_id,
@@ -390,52 +447,41 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
                         "channel": metadata["channel"],
                         "channel_thumbnail": metadata.get("channel_thumbnail", ""),
                     },
-                    "kalshi": {
-                        "ticker": best_market.get("ticker"),
-                        "event_ticker": event_ticker,
-                        "question": formatted.get("question", ""),
-                        "outcome": formatted.get("outcome", ""),
-                        "yes_price": best_market.get("yes_bid", 0),
-                        "no_price": best_market.get("no_bid", 0),
-                        "volume": best_market.get("volume", 0),
-                        "image_url": market_image,
-                    },
+                    "kalshi": list(kalshi_list),
                     "keywords": keywords,
                 }
 
         events = await self._get_events(status="open", limit=200)
         print(f"[{video_id}] Events fetched: {len(events)}")
-        
+
         if not events:
             print(f"[{video_id}] FAILED: No events returned")
             return None
 
         event_idx = await self._match_keywords_to_events(keywords, events)
         print(f"[{video_id}] Matched event index: {event_idx}")
-        
+
         if event_idx is None or event_idx >= len(events):
             event_idx = 0
-        
+
         best_event = events[event_idx]
         print(f"[{video_id}] Matched event: {best_event.get('title', 'Unknown')}")
-        
+
         markets = best_event.get("markets", [])
         if not markets:
             markets = await self._get_markets_for_event(best_event.get("event_ticker", ""))
-        
+
         if not markets:
             print(f"[{video_id}] FAILED: No markets for event")
             return None
-        
-        best_market = markets[0]
-        print(f"[{video_id}] SUCCESS (event) - Market: {best_market.get('ticker')}")
-        formatted = await self._format_market_display(best_market, best_event, keywords)
 
-        event_ticker = best_event.get("event_ticker", "")
-        market_image = await self._resolve_market_image(
-            event_ticker, best_market.get("ticker", ""), best_event
-        )
-        print(f"[{video_id}] Market image: {market_image}")
+        selected = markets[:10]
+        series_ticker = best_event.get("series_ticker", "")
+        print(f"[{video_id}] SUCCESS (event) - {len(selected)} markets")
+        kalshi_list = await asyncio.gather(*[
+            self._build_market_dict(m, best_event, series_ticker, keywords)
+            for m in selected
+        ])
 
         return {
             "youtube": {
@@ -445,26 +491,22 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
                 "channel": metadata["channel"],
                 "channel_thumbnail": metadata.get("channel_thumbnail", ""),
             },
-            "kalshi": {
-                "ticker": best_market.get("ticker"),
-                "event_ticker": event_ticker,
-                "question": formatted.get("question", ""),
-                "outcome": formatted.get("outcome", ""),
-                "yes_price": best_market.get("yes_bid", 0),
-                "no_price": best_market.get("no_bid", 0),
-                "volume": best_market.get("volume", 0),
-                "image_url": market_image,
-            },
+            "kalshi": list(kalshi_list),
             "keywords": keywords,
         }
 
     async def get_feed(self, video_ids: list[str]) -> list[dict]:
-        tasks = [self.match_video(vid) for vid in video_ids]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        feed = []
-        for vid, r in zip(video_ids, results):
-            if isinstance(r, Exception):
-                print(f"[{vid}] FAILED: {r}", flush=True)
-            elif r:
-                feed.append(r)
-        return feed
+        self._session = aiohttp.ClientSession()
+        try:
+            tasks = [self.match_video(vid) for vid in video_ids]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            feed = []
+            for vid, r in zip(video_ids, results):
+                if isinstance(r, Exception):
+                    print(f"[{vid}] FAILED: {r}", flush=True)
+                elif r:
+                    feed.append(r)
+            return feed
+        finally:
+            await self._session.close()
+            self._session = None

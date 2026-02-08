@@ -1,12 +1,14 @@
 export interface KalshiMarket {
   ticker: string
   event_ticker?: string
+  series_ticker?: string
   question: string
   outcome: string
   yes_price: number
   no_price: number
   volume?: number
   image_url?: string
+  price_history?: { ts: number; price: number }[]
 }
 
 export interface YouTubeShort {
@@ -19,7 +21,7 @@ export interface YouTubeShort {
 
 export interface FeedItem {
   id: string
-  kalshi?: KalshiMarket
+  kalshi?: KalshiMarket[]
   youtube: YouTubeShort
 }
 

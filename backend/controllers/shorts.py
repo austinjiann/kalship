@@ -25,6 +25,22 @@ class Shorts(APIController):
             return json({"error": "No matching market found"}, status=404)
         return json(result)
 
+    @get("/candlesticks")
+    async def get_candlesticks(
+        self, ticker: str = "", series_ticker: str = "", period: int = 1, hours: int = 2
+    ):
+        if not ticker or not series_ticker:
+            return json({"error": "ticker and series_ticker required"}, status=400)
+        if period not in (1, 60, 1440):
+            return json({"error": "period must be 1, 60, or 1440"}, status=400)
+        try:
+            candlesticks = await self.feed_service.get_candlesticks(
+                series_ticker, ticker, period_interval=period, hours=hours
+            )
+            return json({"candlesticks": candlesticks})
+        except Exception as e:
+            return json({"error": str(e)}, status=500)
+
     @get("/feed")
     async def get_feed(self, video_ids: str = "", limit: int = 10):
         if not video_ids:
