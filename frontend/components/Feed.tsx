@@ -3,6 +3,30 @@
 import { useEffect, useRef, useImperativeHandle, forwardRef, memo, useState, useCallback } from 'react'
 import { FeedItem } from '@/types'
 import ShortCard from './ShortCard'
+import { prefetchVideoBlob } from '@/lib/videoCache'
+
+const PREFETCH_LOOKAHEAD = 3
+const PREFETCH_BEHIND = 1
+const prefetchedVideoUrls = new Set<string>()
+
+function prefetchMp4Source(url?: string) {
+  if (!url || prefetchedVideoUrls.has(url) || typeof document === 'undefined') {
+    return
+  }
+  try {
+    prefetchedVideoUrls.add(url)
+    const link = document.createElement('link')
+    link.rel = 'preload'
+    link.as = 'video'
+    link.href = url
+    link.crossOrigin = 'anonymous'
+    link.setAttribute('fetchpriority', 'high')
+    link.dataset.prefetch = 'ai-video'
+    document.head.appendChild(link)
+  } catch (error) {
+    console.warn('[prefetch] Failed to warm AI video', error)
+  }
+}
 
 interface FeedProps {
   items: FeedItem[]
@@ -45,7 +69,7 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
     setActiveIndex(index)
     const activeItem = itemsRef.current[index]
     if (activeItem) {
-      lastNotifiedVideoRef.current = activeItem.youtube.video_id
+      lastNotifiedVideoRef.current = activeItem.id
       onCurrentItemChangeRef.current?.(activeItem)
     }
   }, [])
@@ -89,23 +113,45 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
       lastNotifiedVideoRef.current = undefined
       return
     }
-    if (lastNotifiedVideoRef.current === activeItem.youtube.video_id) {
+    if (lastNotifiedVideoRef.current === activeItem.id) {
       return
     }
-    lastNotifiedVideoRef.current = activeItem.youtube.video_id
+    lastNotifiedVideoRef.current = activeItem.id
     onCurrentItemChangeRef.current?.(activeItem)
+  }, [items, safeActiveIndex])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const indicesToWarm = new Set<number>()
+    for (let offset = -PREFETCH_BEHIND; offset <= PREFETCH_LOOKAHEAD; offset++) {
+      const idx = safeActiveIndex + offset
+      if (idx >= 0 && idx < items.length) {
+        indicesToWarm.add(idx)
+      }
+    }
+    indicesToWarm.forEach((idx) => {
+      const candidate = items[idx]
+      if (candidate?.video?.type === 'mp4') {
+        prefetchMp4Source(candidate.video.url)
+        prefetchVideoBlob(candidate.video.url)
+      }
+    })
   }, [items, safeActiveIndex])
 
   return (
     <div ref={containerRef} className="feed-container">
-      {items.map((item, index) => (
-        <ShortCard
-          key={item.youtube.video_id}
-          item={item}
-          isActive={index === safeActiveIndex && !paused}
-          shouldRender={Math.abs(index - safeActiveIndex) <= 1}
-        />
-      ))}
+      {items.map((item, index) => {
+        const renderWindow = item.video?.type === 'mp4' ? 3 : 2
+        const shouldRender = Math.abs(index - safeActiveIndex) <= renderWindow
+        return (
+          <ShortCard
+            key={`${item.id}-${index}`}
+            item={item}
+            isActive={index === safeActiveIndex && !paused}
+            shouldRender={shouldRender}
+          />
+        )
+      })}
     </div>
   )
 })

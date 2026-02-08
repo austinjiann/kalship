@@ -16,6 +16,7 @@ class JobStatus:
     job_start_time: Optional[datetime] = None
     job_end_time: Optional[datetime] = None
     video_url: Optional[str] = None
+    video_url_720: Optional[str] = None
     error: Optional[str] = None
     original_bet_link: Optional[str] = None
     image_url: Optional[str] = None

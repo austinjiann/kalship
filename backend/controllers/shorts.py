@@ -1,5 +1,5 @@
-from blacksheep import json
-from blacksheep.server.controllers import APIController, get
+from blacksheep import json, Request
+from blacksheep.server.controllers import APIController, get, post
 
 from services.feed_service import FeedService
 
@@ -57,19 +57,44 @@ class Shorts(APIController):
         except Exception as e:
             return json({"error": str(e)}, status=500)
 
+    @post("/advice")
+    async def get_advice(self, request: Request):
+        try:
+            data = await request.json()
+        except Exception:
+            return json({"error": "Invalid JSON body"}, status=400)
+        question = data.get("question", "")
+        side = data.get("side", "YES")
+        amount = data.get("amount", 0)
+        yes_price = data.get("yes_price", 50)
+        no_price = data.get("no_price", 50)
+        if not question:
+            return json({"error": "question is required"}, status=400)
+        advice = await self.feed_service.get_bet_advice(
+            question, side, amount, yes_price, no_price
+        )
+        return json({"advice": advice})
+
     @get("/feed")
-    async def get_feed(self, video_ids: str = "", limit: int = 10):
+    async def get_feed(self, video_ids: str = "", limit: int | None = None):
         if not video_ids:
             return json({"error": "video_ids required"}, status=400)
-        ids = [v.strip() for v in video_ids.split(",") if v.strip()][:limit]
+        raw_ids = [v.strip() for v in video_ids.split(",") if v.strip()]
+        if limit is not None and limit > 0:
+            ids = raw_ids[:limit]
+        else:
+            ids = raw_ids
         if not ids:
             return json({"error": "No valid video_ids provided"}, status=400)
-        results = await self.feed_service.get_feed(ids)
         feed = []
-        for i, item in enumerate(results):
-            feed.append({
-                "id": str(i + 1),
-                "youtube": item["youtube"],
-                "kalshi": item["kalshi"],
-            })
+        chunk_size = 10
+        for start in range(0, len(ids), chunk_size):
+            chunk = ids[start:start + chunk_size]
+            results = await self.feed_service.get_feed(chunk)
+            for item in results:
+                feed.append({
+                    "id": str(len(feed) + 1),
+                    "youtube": item["youtube"],
+                    "kalshi": item["kalshi"],
+                })
         return json(feed)

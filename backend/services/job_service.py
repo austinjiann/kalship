@@ -1,6 +1,9 @@
 import asyncio
 import json
 import logging
+import os
+import shutil
+import tempfile
 import traceback
 import uuid
 from datetime import datetime
@@ -104,6 +107,30 @@ class JobService:
         else:
             logger.warning("GOOGLE_CLOUD_BUCKET_NAME not set - job persistence disabled")
 
+        self._bucket_cache: dict[str, storage.Bucket] = {}
+
+    def _split_gs_uri(self, gs_uri: str) -> tuple[str, str] | None:
+        if not gs_uri or not gs_uri.startswith("gs://"):
+            return None
+        path = gs_uri[5:]
+        if "/" not in path:
+            return None
+        bucket_name, blob_name = path.split("/", 1)
+        if not bucket_name or not blob_name:
+            return None
+        return bucket_name, blob_name
+
+    def _get_bucket(self, bucket_name: str) -> Optional[storage.Bucket]:
+        if not bucket_name or not self.storage_client:
+            return None
+        if self.bucket and self.bucket.name == bucket_name:
+            return self.bucket
+        if bucket_name in self._bucket_cache:
+            return self._bucket_cache[bucket_name]
+        bucket = self.storage_client.bucket(bucket_name)
+        self._bucket_cache[bucket_name] = bucket
+        return bucket
+
     def _image_blob_path(self, job_id: str, image_num: int) -> str:
         return f"images/{job_id}/image{image_num}.png"
 
@@ -130,6 +157,84 @@ class JobService:
         public_url = f"https://storage.googleapis.com/{gs_uri[5:]}"
         logger.info(f"_generate_signed_url: Using public URL: {public_url}")
         return public_url
+
+    async def _transcode_to_720p(self, source_path: str, output_path: str):
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            source_path,
+            "-vf",
+            "scale=-2:720",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "faster",
+            "-crf",
+            "20",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            output_path,
+        ]
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg failed with code {process.returncode}: {stderr.decode('utf-8', 'ignore')[:400]}"
+            )
+
+    async def _ensure_720p_video(self, job_id: str, source_gs_uri: str) -> Optional[str]:
+        if not self.storage_client:
+            return None
+        parsed = self._split_gs_uri(source_gs_uri)
+        if not parsed:
+            return None
+        bucket_name, blob_name = parsed
+        bucket = self._get_bucket(bucket_name)
+        if bucket is None:
+            return None
+
+        root, ext = os.path.splitext(blob_name)
+        ext = ext or ".mp4"
+        derived_blob_name = f"{root}_720p{ext}"
+        derived_blob = bucket.blob(derived_blob_name)
+        if derived_blob.exists(client=self.storage_client):
+            return f"gs://{bucket_name}/{derived_blob_name}"
+
+        source_blob = bucket.blob(blob_name)
+        if not source_blob.exists(client=self.storage_client):
+            logger.error(f"[{job_id[:8]}] Source blob missing for transcode: {source_gs_uri}")
+            return None
+
+        tmp_dir = tempfile.mkdtemp(prefix=f"job-{job_id}-")
+        source_path = os.path.join(tmp_dir, "source.mp4")
+        output_path = os.path.join(tmp_dir, "source_720.mp4")
+        try:
+            await asyncio.to_thread(source_blob.download_to_filename, source_path)
+            await self._transcode_to_720p(source_path, output_path)
+            await asyncio.to_thread(
+                derived_blob.upload_from_filename,
+                output_path,
+                content_type="video/mp4",
+            )
+            logger.info(f"[{job_id[:8]}] Uploaded 720p rendition to {derived_blob_name}")
+            return f"gs://{bucket_name}/{derived_blob_name}"
+        except Exception as exc:
+            logger.error(f"[{job_id[:8]}] Failed to transcode video to 720p: {exc}")
+            return None
+        finally:
+            try:
+                shutil.rmtree(tmp_dir)
+            except Exception:
+                pass
 
     def _download_job_sync(self, job_id: str) -> Optional[dict]:
         if not self.bucket or not self.storage_client:
@@ -178,6 +283,35 @@ class JobService:
         except Exception as exc:
             logger.error(f"Failed to load job {job_id} from GCS: {exc}")
             return None
+
+    async def _ensure_video_urls(self, job_id: str, job: dict) -> tuple[Optional[str], Optional[str]]:
+        updated = False
+        video_uri = job.get("video_uri")
+        video_url = job.get("video_url")
+        if video_uri and not video_url:
+            video_url = self._generate_signed_url(video_uri)
+            if video_url:
+                job["video_url"] = video_url
+                updated = True
+
+        video_uri_720 = job.get("video_uri_720")
+        if video_uri and not video_uri_720:
+            video_uri_720 = await self._ensure_720p_video(job_id, video_uri)
+            if video_uri_720:
+                job["video_uri_720"] = video_uri_720
+                updated = True
+
+        video_url_720 = job.get("video_url_720")
+        if video_uri_720 and not video_url_720:
+            video_url_720 = self._generate_signed_url(video_uri_720)
+            if video_url_720:
+                job["video_url_720"] = video_url_720
+                updated = True
+
+        if updated:
+            await self._save_job(job_id, job)
+
+        return job.get("video_url"), job.get("video_url_720")
 
     async def _ensure_local_worker(self):
         if self.cloud_tasks:
@@ -330,24 +464,36 @@ class JobService:
             return JobStatus(status="error", job_start_time=job_start_time, job_end_time=job_end_time, error=job.get("error"), original_bet_link=original_bet_link, image_url=image_url)
 
         if status == "done":
-            video_url = job.get("video_url")
-            video_uri = job.get("video_uri")
-            if video_uri:
-                video_url = self._generate_signed_url(video_uri)
-            return JobStatus(status="done", job_start_time=job_start_time, job_end_time=job_end_time, video_url=video_url, original_bet_link=original_bet_link, image_url=image_url)
+            video_url, video_url_720 = await self._ensure_video_urls(job_id, job)
+            return JobStatus(
+                status="done",
+                job_start_time=job_start_time,
+                job_end_time=job_end_time,
+                video_url=video_url,
+                video_url_720=video_url_720,
+                original_bet_link=original_bet_link,
+                image_url=image_url,
+            )
 
         if status == "processing" and job.get("operation_name"):
             result = await self.vertex_service.get_video_status_by_name(job["operation_name"])
             if result.status == "done":
                 video_uri = result.video_url
-                video_url = self._generate_signed_url(video_uri) if video_uri else None
                 job["status"] = "done"
                 job["video_uri"] = video_uri
-                job["video_url"] = video_url
                 job["job_end_time"] = datetime.now().isoformat()
                 await self._save_job(job_id, job)
+                video_url, video_url_720 = await self._ensure_video_urls(job_id, job)
                 print(f"[{job_id[:8]}] Video complete", flush=True)
-                return JobStatus(status="done", job_start_time=job_start_time, job_end_time=job_end_time, video_url=video_url, original_bet_link=original_bet_link, image_url=image_url)
+                return JobStatus(
+                    status="done",
+                    job_start_time=job_start_time,
+                    job_end_time=job_end_time,
+                    video_url=video_url,
+                    video_url_720=video_url_720,
+                    original_bet_link=original_bet_link,
+                    image_url=image_url,
+                )
             if result.status == "error":
                 job["status"] = "error"
                 job["error"] = result.error
