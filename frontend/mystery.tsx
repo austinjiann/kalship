@@ -45,22 +45,22 @@ export const FEED_VIDEOS: VideoEntry[] = [
 
 export const AI_REEL_VIDEOS: VideoEntry[] = [
   {
-    source: { type: 'mp4', url: 'https://storage.googleapis.com/qhacks-486618-storage/videos/13118567516871963719/sample_0.mp4' },
+    source: { type: 'mp4', url: 'https://storage.googleapis.com/qhacks-486618-storage/videos/13118567516871963719/la.mp4' },
     topic: VideoTopic.WEATHER_SNOW,
     label: 'good los angeles snow',
   },
   {
-    source: { type: 'mp4', url: 'https://storage.googleapis.com/qhacks-486618-storage/videos/1391749192816635661/sample_0.mp4' },
+    source: { type: 'mp4', url: 'https://storage.googleapis.com/qhacks-486618-storage/videos/13118567516871963719/la.mp4' },
     topic: VideoTopic.WEATHER_SNOW,
     label: 'decent los angeles snow',
   },
   {
-    source: { type: 'mp4', url: 'https://storage.googleapis.com/qhacks-486618-storage/videos/16726392921135178613/sample_0.mp4' },
+    source: { type: 'mp4', url: 'https://storage.googleapis.com/qhacks-486618-storage/videos/13118567516871963719/superbowl.mp4' },
     topic: VideoTopic.SUPERBOWL,
     label: 'good superbowl',
   },
   {
-    source: { type: 'mp4', url: 'https://storage.googleapis.com/qhacks-486618-storage/videos/9874267134736913353/sample_0.mp4' },
+    source: { type: 'mp4', url: 'https://storage.googleapis.com/qhacks-486618-storage/videos/13118567516871963719/superbowl.mp4' },
     topic: VideoTopic.SUPERBOWL,
     label: 'good superbowl but has weird text',
   },
