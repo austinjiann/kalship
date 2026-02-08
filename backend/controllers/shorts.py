@@ -1,5 +1,5 @@
-from blacksheep import json
-from blacksheep.server.controllers import APIController, get
+from blacksheep import Request, json
+from blacksheep.server.controllers import APIController, get, post
 
 from services.feed_service import FeedService
 

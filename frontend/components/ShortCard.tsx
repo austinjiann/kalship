@@ -188,24 +188,6 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
             style={{ pointerEvents: 'auto', objectFit: 'cover' }}
           />
         </div>
-        {item.isInjected && item.injectedByBetSide && (
-          <div style={{
-            position: 'absolute',
-            top: 16,
-            left: 16,
-            zIndex: 15,
-            padding: '4px 12px',
-            borderRadius: 999,
-            background: item.injectedByBetSide === 'YES'
-              ? 'rgba(16, 185, 129, 0.8)'
-              : 'rgba(239, 68, 68, 0.8)',
-            color: '#fff',
-            fontSize: 12,
-            fontWeight: 600,
-          }}>
-            You bet {item.injectedByBetSide}
-          </div>
-        )}
       </div>
     )
   }

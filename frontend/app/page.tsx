@@ -108,7 +108,7 @@ const BgWrapper = ({
     <div
       className="absolute z-20 pointer-events-none select-none"
       style={{
-        top: logoShiftedRight ? '8.5%' : '7.0%',
+        top: logoShiftedRight ? '5.5%' : '4.0%',
         left: logoShiftedRight ? '18%' : '1%',
         transition: 'left 0.8s ease, top 0.8s ease',
       }}
@@ -165,6 +165,7 @@ export default function Home() {
   const isFeed = stage === 5
   const [showKalshiWarning, setShowKalshiWarning] = useState(false)
   const [pendingKalshiUrl, setPendingKalshiUrl] = useState<string | null>(null)
+  const [betConfirmation, setBetConfirmation] = useState<{ side: 'YES' | 'NO'; message: string } | null>(null)
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -425,13 +426,12 @@ export default function Home() {
     if (!expandedMarket) return
     console.log(`Bet placed: ${side} on ${expandedMarket.ticker}`)
 
-    const keywords = expandedMarket.question
-      .toLowerCase()
-      .replace(/[?.,!]/g, '')
-      .split(/\s+/)
-      .filter(w => w.length > 2)
+    insertMp4(currentIndexRef.current, expandedMarket, side)
 
-    insertMp4(currentIndexRef.current, keywords, expandedMarket, side)
+    setBetConfirmation({
+      side,
+      message: `You bet ${side}! Keep scrolling! Your bet is coming to life!`,
+    })
   }, [expandedMarket, insertMp4])
 
   const handleCurrentItemChange = useCallback((item: { kalshi?: KalshiMarket[] }, index: number) => {
@@ -486,16 +486,25 @@ export default function Home() {
     return () => window.removeEventListener('keydown', handler)
   }, [showKalshiWarning, dismissKalshiWarning])
 
+  // Auto-dismiss bet confirmation after 3 seconds
+  useEffect(() => {
+    if (!betConfirmation) return
+    const t = setTimeout(() => setBetConfirmation(null), 3000)
+    return () => clearTimeout(t)
+  }, [betConfirmation])
+
   const currentAnimation = waitingForFeed && stage === 4 ? 'idle' : isFeed ? 'idle' : (TIPS[stage]?.animation ?? 'idle')
   const waitingMessage = feedItems.length === 0 ? 'Loading shorts...' : 'Hang tight...'
   const currentTipText = isFeed ? FEED_TIP : (waitingForFeed && stage === 4 ? waitingMessage : (TIPS[stage]?.text ?? ''))
+
+  const overlayActive = showKalshiWarning || !!betConfirmation
 
   // rotationY per stage: point stages face toward phone, feed faces phone more
   const currentRotationY = isFeed ? 0.8 : (currentAnimation === 'point' ? 0.4 : 0.3)
 
   // Phone content shared by both tutorial and feed views
   const phoneContent = feedItems.length > 0 ? (
-    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} paused={showKalshiWarning} />
+    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} paused={overlayActive} />
   ) : (
     <div className="flex flex-col items-center justify-center h-full bg-black gap-3 p-4">
       <div className="text-white/30 text-sm">
@@ -597,14 +606,14 @@ export default function Home() {
               key="phone"
               className="relative flex-shrink-0"
               initial={{ y: 120, opacity: 0, rotate: 3 }}
-              animate={showKalshiWarning
+              animate={overlayActive
                 ? { y: 40, opacity: 0.1, rotate: 0, scale: 0.95 }
                 : { y: 0, opacity: 1, rotate: 0, scale: 1 }
               }
               transition={{ duration: 0.7, ease: easeCubic }}
               style={{
                 filter: 'drop-shadow(0 20px 60px rgba(0,0,0,0.5))',
-                pointerEvents: showKalshiWarning ? 'none' : 'auto',
+                pointerEvents: overlayActive ? 'none' : 'auto',
               }}
             >
               <Iphone className="w-[380px] max-h-screen" frameColor="#1a1a1a">
@@ -678,13 +687,13 @@ export default function Home() {
               key="feed-bet"
               className="flex flex-col gap-3 w-[640px] flex-shrink-0"
               initial={{ x: 40, opacity: 0, rotate: 2 }}
-              animate={showKalshiWarning
+              animate={overlayActive
                 ? { x: 80, opacity: 0, rotate: 0 }
                 : { x: 0, opacity: 1, rotate: 0 }
               }
               exit={{ x: 40, opacity: 0 }}
               transition={{ duration: 0.5, ease: 'easeOut' }}
-              style={{ pointerEvents: showKalshiWarning ? 'none' : 'auto' }}
+              style={{ pointerEvents: overlayActive ? 'none' : 'auto' }}
             >
               <div
                 className="rounded-2xl p-5"
@@ -908,6 +917,54 @@ export default function Home() {
                   </motion.div>
                 </div>
               </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+
+        {/* Bet confirmation overlay */}
+        <AnimatePresence>
+          {betConfirmation && (
+            <>
+            <motion.div
+              key="bet-backdrop"
+              className="fixed inset-0 z-40"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              style={{ background: 'rgba(0, 0, 0, 0.6)' }}
+            />
+            <motion.div
+              key="bet-confirmation"
+              className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              <div className="flex flex-col items-center">
+                <motion.div
+                  initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.5, delay: 0.15, ease: easeCubic }}
+                >
+                  <SpeechBubble text={betConfirmation.message} large />
+                </motion.div>
+                <motion.div
+                  initial={{ opacity: 0, y: 40 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 20 }}
+                  transition={{ duration: 0.5, ease: easeCubic }}
+                >
+                  <CharacterPreview
+                    animation="wave"
+                    size={{ width: 500, height: 600 }}
+                    rotationY={0.3}
+                  />
+                </motion.div>
+              </div>
+            </motion.div>
             </>
           )}
         </AnimatePresence>

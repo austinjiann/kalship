@@ -2,13 +2,13 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { QueueItem, FeedItem, KalshiMarket } from '@/types'
-import { VIDEO_IDS, findVisualizationVideo } from '@/mystery'
+import { VIDEO_IDS, findVisualizationBySeriesTicker } from '@/mystery'
 
 const SESSION_RESULTS_KEY = 'feed_results'
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const BATCH_SIZE = 10
 
-const PINNED_IDS = ['DMRVJ2ZX-L4', 'tn9VrI5pToI', 'hLAz3y61V2I']
+const PINNED_IDS = ['HZOkwNsYFdo', '_qW6a1A9gb0', '3fQhDJlRJYg']
 
 function shuffleArray<T>(arr: T[]): T[] {
   const shuffled = [...arr]
@@ -62,7 +62,20 @@ export function useVideoQueue() {
     const pinnedSet = new Set(PINNED_IDS)
     const remaining = VIDEO_IDS.filter(id => !pinnedSet.has(id))
     const shuffled = shuffleArray(remaining)
-    const ordered = [...PINNED_IDS, ...shuffled]
+
+    // Build first batch: take 7 random + insert 3 pinned at sorted random slots
+    const firstBatch = shuffled.splice(0, BATCH_SIZE - PINNED_IDS.length)
+    // Pick 3 unique positions (0..9), sort ascending so pinned order is preserved
+    const slots: number[] = []
+    while (slots.length < PINNED_IDS.length) {
+      const s = Math.floor(Math.random() * (firstBatch.length + slots.length + 1))
+      if (!slots.includes(s)) slots.push(s)
+    }
+    slots.sort((a, b) => a - b)
+    for (let i = 0; i < PINNED_IDS.length; i++) {
+      firstBatch.splice(slots[i], 0, PINNED_IDS[i])
+    }
+    const ordered = [...firstBatch, ...shuffled]
 
     const initial: QueueItem[] = ordered.map(id => {
       const cached = cachedResults?.get(id)
@@ -184,11 +197,10 @@ export function useVideoQueue() {
 
   const insertMp4 = useCallback((
     currentIndex: number,
-    keywords: string[],
     market: KalshiMarket,
     betSide: 'YES' | 'NO'
   ) => {
-    const entry = findVisualizationVideo(keywords)
+    const entry = findVisualizationBySeriesTicker(market.series_ticker)
     if (!entry || entry.source.type !== 'mp4') return
 
     const injectedItem: FeedItem = {
@@ -200,7 +212,7 @@ export function useVideoQueue() {
       injectedByBetSide: betSide,
     }
 
-    const offset = 3 + Math.floor(Math.random() * 3) // 3, 4, or 5
+    const offset = 4 + Math.floor(Math.random() * 2) // 4 or 5
 
     setFeedItems(prev => {
       const insertIdx = Math.min(currentIndex + offset, prev.length)

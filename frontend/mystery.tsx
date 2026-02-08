@@ -23,9 +23,7 @@ export const FEED_VIDEOS: VideoEntry[] = [
   { source: { type: 'youtube', videoId: 'chRUPKIBvEw' }, topic: VideoTopic.GENERAL },
   { source: { type: 'youtube', videoId: 'senzNHh7-LE' }, topic: VideoTopic.GENERAL },
   { source: { type: 'youtube', videoId: 'OKIBzddVXCk' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: '-kzbhS02-gA' }, topic: VideoTopic.GENERAL },
   { source: { type: 'youtube', videoId: 'p5CYi54MZEY' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'J1RgDOSHH70' }, topic: VideoTopic.GENERAL },
   { source: { type: 'youtube', videoId: 'UyXQjeiXaEk' }, topic: VideoTopic.GENERAL },
   { source: { type: 'youtube', videoId: 'ug0mH7dtR8g' }, topic: VideoTopic.GENERAL },
   { source: { type: 'youtube', videoId: 'sKyma2S9D1Y' }, topic: VideoTopic.GENERAL },
@@ -82,6 +80,23 @@ const TOPIC_KEYWORDS: Record<VideoTopic, string[]> = {
   [VideoTopic.WEATHER_SNOW]: ['snow', 'weather', 'los angeles', 'la snow', 'blizzard', 'winter', 'storm', 'cold'],
   [VideoTopic.MARS_SPACE]: ['mars', 'space', 'nasa', 'spacex', 'rocket', 'planet', 'astronaut'],
   [VideoTopic.GENERAL]: [],
+}
+
+const SERIES_TO_TOPIC: Record<string, VideoTopic> = {
+  'KXSB': VideoTopic.SUPERBOWL,
+  'KXNBAGAME': VideoTopic.SUPERBOWL,
+  'KXMLBGAME': VideoTopic.SUPERBOWL,
+  'KXNHLGAME': VideoTopic.SUPERBOWL,
+  'KXWCGAME': VideoTopic.SUPERBOWL,
+}
+
+export function findVisualizationBySeriesTicker(seriesTicker?: string): VideoEntry | null {
+  const topic = seriesTicker ? SERIES_TO_TOPIC[seriesTicker] : undefined
+  const pool = topic
+    ? VISUALIZATION_VIDEOS.filter(v => v.topic === topic)
+    : VISUALIZATION_VIDEOS
+  if (pool.length === 0) return null
+  return pool[Math.floor(Math.random() * pool.length)]
 }
 
 export function findVisualizationVideo(keywords: string[]): VideoEntry | null {
