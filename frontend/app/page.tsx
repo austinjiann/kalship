@@ -66,11 +66,9 @@ const easeCubic = [0.22, 1, 0.36, 1] as const
 const BgWrapper = ({
   children,
   blurred = true,
-  logoShiftedRight = false,
 }: {
   children: ReactNode
   blurred?: boolean
-  logoShiftedRight?: boolean
 }) => (
   <div className="relative min-h-screen overflow-hidden">
     {/* Background layer — blur controlled by prop with CSS transition */}
@@ -106,11 +104,10 @@ const BgWrapper = ({
       {children}
     </div>
     <div
-      className="absolute z-20 pointer-events-none select-none"
+      className="fixed z-20 pointer-events-none select-none"
       style={{
-        top: logoShiftedRight ? '5.5%' : '4.0%',
-        left: logoShiftedRight ? '18%' : '1%',
-        transition: 'left 0.8s ease, top 0.8s ease',
+        top: '1.5rem',
+        left: '1.5rem',
       }}
     >
       <Image
@@ -166,6 +163,11 @@ export default function Home() {
   const [showKalshiWarning, setShowKalshiWarning] = useState(false)
   const [pendingKalshiUrl, setPendingKalshiUrl] = useState<string | null>(null)
   const [betConfirmation, setBetConfirmation] = useState<{ side: 'YES' | 'NO'; message: string } | null>(null)
+  const [currentIsInjected, setCurrentIsInjected] = useState(false)
+  const [showBetInput, setShowBetInput] = useState<{ side: 'YES' | 'NO' } | null>(null)
+  const [betAmount, setBetAmount] = useState('')
+  const [adviceLoading, setAdviceLoading] = useState(false)
+  const [adviceText, setAdviceText] = useState<string | null>(null)
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -426,19 +428,26 @@ export default function Home() {
     if (!expandedMarket) return
     console.log(`Bet placed: ${side} on ${expandedMarket.ticker}`)
 
+    if (currentIsInjected) {
+      setShowBetInput({ side })
+      setBetAmount('')
+      return
+    }
+
     insertMp4(currentIndexRef.current, expandedMarket, side)
 
     setBetConfirmation({
       side,
       message: `You bet ${side}! Keep scrolling! Your bet is coming to life!`,
     })
-  }, [expandedMarket, insertMp4])
+  }, [expandedMarket, insertMp4, currentIsInjected])
 
-  const handleCurrentItemChange = useCallback((item: { kalshi?: KalshiMarket[] }, index: number) => {
+  const handleCurrentItemChange = useCallback((item: { kalshi?: KalshiMarket[]; isInjected?: boolean }, index: number) => {
     currentIndexRef.current = index
     setCurrentMarkets(item.kalshi ?? [])
     setSelectedIdx(0)
     setImgError(false)
+    setCurrentIsInjected(!!item.isInjected)
   }, [])
 
   const handleChartReady = useCallback(
@@ -457,9 +466,13 @@ export default function Home() {
   const handleKalshiClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
     e.preventDefault()
     const url = e.currentTarget.href
+    if (currentIsInjected) {
+      window.open(url, '_blank')
+      return
+    }
     setPendingKalshiUrl(url)
     setShowKalshiWarning(true)
-  }, [])
+  }, [currentIsInjected])
 
   const dismissKalshiWarning = useCallback(() => {
     setShowKalshiWarning(false)
@@ -474,17 +487,56 @@ export default function Home() {
     setPendingKalshiUrl(null)
   }, [pendingKalshiUrl])
 
-  // Escape key dismisses Kalshi warning
+  const dismissBetInput = useCallback(() => {
+    setShowBetInput(null)
+    setBetAmount('')
+  }, [])
+
+  const submitBetAdvice = useCallback(async () => {
+    if (!expandedMarket || !showBetInput || !betAmount) return
+    const amount = parseFloat(betAmount)
+    if (isNaN(amount) || amount <= 0) return
+    setAdviceLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/shorts/advice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: expandedMarket.question,
+          side: showBetInput.side,
+          amount,
+          yes_price: expandedMarket.yes_price ?? 50,
+          no_price: expandedMarket.no_price ?? 50,
+        }),
+      })
+      const data = await res.json()
+      setAdviceText(data.advice || 'No advice available right now.')
+    } catch {
+      setAdviceText('Hmm, I couldn\'t get advice right now. Try again!')
+    } finally {
+      setAdviceLoading(false)
+      setShowBetInput(null)
+      setBetAmount('')
+    }
+  }, [expandedMarket, showBetInput, betAmount])
+
+  const dismissAdvice = useCallback(() => {
+    setAdviceText(null)
+  }, [])
+
+  // Escape key dismisses overlays
   useEffect(() => {
-    if (!showKalshiWarning) return
+    if (!showKalshiWarning && !showBetInput && !adviceText) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        dismissKalshiWarning()
+        if (adviceText) dismissAdvice()
+        else if (showBetInput) dismissBetInput()
+        else if (showKalshiWarning) dismissKalshiWarning()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [showKalshiWarning, dismissKalshiWarning])
+  }, [showKalshiWarning, dismissKalshiWarning, showBetInput, dismissBetInput, adviceText, dismissAdvice])
 
   // Auto-dismiss bet confirmation after 3 seconds
   useEffect(() => {
@@ -497,7 +549,7 @@ export default function Home() {
   const waitingMessage = feedItems.length === 0 ? 'Loading shorts...' : 'Hang tight...'
   const currentTipText = isFeed ? FEED_TIP : (waitingForFeed && stage === 4 ? waitingMessage : (TIPS[stage]?.text ?? ''))
 
-  const overlayActive = showKalshiWarning || !!betConfirmation
+  const overlayActive = showKalshiWarning || !!betConfirmation || !!showBetInput || !!adviceText
 
   // rotationY per stage: point stages face toward phone, feed faces phone more
   const currentRotationY = isFeed ? 0.8 : (currentAnimation === 'point' ? 0.4 : 0.3)
@@ -539,7 +591,7 @@ export default function Home() {
   )
 
   return (
-    <BgWrapper blurred={stage >= 2} logoShiftedRight={stage < 2}>
+    <BgWrapper blurred={stage >= 2}>
       <div
         className="relative flex items-center justify-center max-h-screen w-full -mt-4 sm:-mt-6 gap-10"
         style={{ fontFamily: 'var(--font-playfair), serif' }}
@@ -965,6 +1017,232 @@ export default function Home() {
                 </motion.div>
               </div>
             </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+
+        {/* Bet amount input overlay (AI reels only) */}
+        <AnimatePresence>
+          {showBetInput && (
+            <>
+              <motion.div
+                key="bet-input-backdrop"
+                className="fixed inset-0 z-40"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                style={{ background: 'rgba(0, 0, 0, 0.6)' }}
+                onClick={dismissBetInput}
+              />
+              <motion.div
+                key="bet-input-modal"
+                className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <motion.div
+                  className="pointer-events-auto flex flex-col items-center gap-5"
+                  initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  transition={{ duration: 0.4, ease: easeCubic }}
+                >
+                  <div
+                    className="rounded-2xl p-6 w-[400px]"
+                    style={{
+                      background: 'rgba(30, 30, 30, 0.92)',
+                      backdropFilter: 'blur(20px)',
+                      border: '1px solid rgba(255, 255, 255, 0.15)',
+                      boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+                      fontFamily: 'var(--font-playfair), serif',
+                    }}
+                  >
+                    {/* Market question */}
+                    <div className="flex items-start gap-3 mb-4">
+                      {expandedMarket?.image_url && !imgError ? (
+                        <Image
+                          src={expandedMarket.image_url}
+                          alt=""
+                          width={40}
+                          height={40}
+                          unoptimized
+                          className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
+                          onError={() => setImgError(true)}
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: 'rgba(16, 185, 129, 0.2)' }}>
+                          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-emerald-400"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <p className="text-white/90 text-sm leading-snug line-clamp-2">{expandedMarket?.question}</p>
+                        <p className="text-emerald-400 text-xs mt-0.5">
+                          Buy {showBetInput.side}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* YES / NO price pills */}
+                    <div className="flex gap-2 mb-4">
+                      <div
+                        className="flex-1 py-2 rounded-xl text-center text-sm font-medium transition-colors"
+                        style={{
+                          background: showBetInput.side === 'YES' ? 'rgba(16, 185, 129, 0.15)' : 'transparent',
+                          border: showBetInput.side === 'YES' ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(255,255,255,0.15)',
+                          color: showBetInput.side === 'YES' ? 'rgb(52, 211, 153)' : 'rgba(255,255,255,0.4)',
+                        }}
+                      >
+                        Yes {expandedMarket?.yes_price ?? 50}¢
+                      </div>
+                      <div
+                        className="flex-1 py-2 rounded-xl text-center text-sm font-medium transition-colors"
+                        style={{
+                          background: showBetInput.side === 'NO' ? 'rgba(239, 68, 68, 0.15)' : 'transparent',
+                          border: showBetInput.side === 'NO' ? '1px solid rgba(239, 68, 68, 0.5)' : '1px solid rgba(255,255,255,0.15)',
+                          color: showBetInput.side === 'NO' ? 'rgb(248, 113, 113)' : 'rgba(255,255,255,0.4)',
+                        }}
+                      >
+                        No {expandedMarket?.no_price ?? 50}¢
+                      </div>
+                    </div>
+
+                    {/* Amount input */}
+                    <div
+                      className="rounded-xl px-4 py-3 mb-4 flex items-center justify-between"
+                      style={{ border: '1px solid rgba(16, 185, 129, 0.4)', background: 'rgba(16, 185, 129, 0.05)' }}
+                    >
+                      <div>
+                        <p className="text-white/80 text-sm">Amount</p>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-white/60 text-lg">$</span>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={betAmount}
+                          onChange={(e) => setBetAmount(e.target.value)}
+                          placeholder="0"
+                          autoFocus
+                          className="w-24 bg-transparent text-white text-2xl font-semibold outline-none text-right [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') submitBetAdvice()
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Odds & Payout */}
+                    {(() => {
+                      const price = showBetInput.side === 'YES'
+                        ? (expandedMarket?.yes_price ?? 50)
+                        : (expandedMarket?.no_price ?? 50)
+                      const amt = parseFloat(betAmount) || 0
+                      const payout = amt > 0 && price > 0 ? (amt / price) * 100 : 0
+                      return (
+                        <div className="flex items-center justify-between mb-5">
+                          <div>
+                            <p className="text-white/40 text-xs">Odds</p>
+                            <p className="text-white/80 text-sm font-medium">{price}% chance</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-white/40 text-xs">Payout if {showBetInput.side}</p>
+                            <p className="text-emerald-400 text-xl font-semibold">
+                              ${payout > 0 ? payout.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—'}
+                            </p>
+                          </div>
+                        </div>
+                      )
+                    })()}
+
+                    {/* Actions */}
+                    <div className="flex gap-3">
+                      <button
+                        onClick={dismissBetInput}
+                        className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer bg-white/[0.08] border border-white/15 text-white/50 hover:bg-white/20 hover:text-white/70"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={submitBetAdvice}
+                        disabled={adviceLoading || !betAmount || parseFloat(betAmount) <= 0}
+                        className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/40 hover:border-emerald-500/60 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        {adviceLoading ? 'Asking Joe...' : 'Ask Joe'}
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+
+        {/* Joe's advice overlay */}
+        <AnimatePresence>
+          {adviceText && (
+            <>
+              <motion.div
+                key="advice-backdrop"
+                className="fixed inset-0 z-40"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                style={{ background: 'rgba(0, 0, 0, 0.6)' }}
+                onClick={dismissAdvice}
+              />
+              <motion.div
+                key="advice-overlay"
+                className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <div className="flex flex-col items-center pointer-events-auto">
+                  <motion.div
+                    initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.5, delay: 0.2, ease: easeCubic }}
+                  >
+                    <SpeechBubble large>
+                      <div className="whitespace-pre-line text-base leading-relaxed">{adviceText}</div>
+                    </SpeechBubble>
+                  </motion.div>
+                  <motion.div
+                    initial={{ opacity: 0, y: 40 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 20 }}
+                    transition={{ duration: 0.5, ease: easeCubic }}
+                  >
+                    <CharacterPreview
+                      animation="point"
+                      size={{ width: 500, height: 600 }}
+                      rotationY={0.3}
+                    />
+                  </motion.div>
+                  <motion.div
+                    className="relative z-10 -mt-8"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.4, delay: 0.35, ease: easeCubic }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => { dismissAdvice() }}
+                      className="px-8 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/40 hover:border-emerald-500/60"
+                    >
+                      Back to Feed
+                    </button>
+                  </motion.div>
+                </div>
+              </motion.div>
             </>
           )}
         </AnimatePresence>
