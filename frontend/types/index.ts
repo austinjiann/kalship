@@ -22,16 +22,24 @@ export interface YouTubeShort {
   channel_thumbnail?: string
 }
 
+export type VideoMedia =
+  | { type: 'youtube'; data: YouTubeShort }
+  | { type: 'mp4'; url: string; title?: string }
+
 export interface FeedItem {
   id: string
   kalshi?: KalshiMarket[]
   youtube: YouTubeShort
+  video?: VideoMedia
+  isInjected?: boolean
+  injectedByBetSide?: 'YES' | 'NO'
 }
 
 export interface JobStatus {
   job_id: string
   status: 'waiting' | 'done' | 'error'
   video_url?: string | null
+  video_url_720?: string | null
   error: string | null
   original_bet_link?: string | null
 }

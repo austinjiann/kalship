@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 export interface BackendJobStatus {
   status: 'waiting' | 'done' | 'error'
   video_url?: string | null
+  video_url_720?: string | null
   error?: string | null
   original_bet_link?: string | null
 }

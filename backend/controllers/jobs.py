@@ -105,6 +105,7 @@ class Jobs(APIController):
         response_data = {
             "status": status.status,
             "video_url": status.video_url,
+            "video_url_720": status.video_url_720,
             "error": status.error,
             "original_bet_link": status.original_bet_link,
             "image_url": status.image_url,

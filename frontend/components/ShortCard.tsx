@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FeedItem } from '@/types'
+import { getPrefetchedVideoUrl, prefetchVideoBlob } from '@/lib/videoCache'
 
 const YT_BASE_ORIGIN = 'https://www.youtube.com'
 const ALLOWED_ORIGINS = new Set<string>([YT_BASE_ORIGIN, 'https://www.youtube-nocookie.com'])
@@ -17,7 +18,7 @@ const emitMuteChange = () => {
 
 const subscribeToMute = (listener: (value: boolean) => void) => {
   muteListeners.add(listener)
-  return () => muteListeners.delete(listener)
+  return () => { muteListeners.delete(listener) }
 }
 
 interface ShortCardProps {
@@ -27,16 +28,21 @@ interface ShortCardProps {
 }
 
 function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
+  const isMP4 = item.video?.type === 'mp4'
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
   const playerReadyRef = useRef(false)
+  const videoReadyRef = useRef(false)
   const activeStateRef = useRef(isActive)
   const listeningTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
-  const iframeId = useMemo(() => `short-${item.youtube.video_id}`, [item.youtube.video_id])
+  const iframeId = useMemo(() => `short-${item.id}`, [item.id])
   const [playerOrigin] = useState(() => (typeof window !== 'undefined' ? window.location.origin : ''))
   const [isMuted, setIsMuted] = useState(globalMuted)
+  const [mp4Source, setMp4Source] = useState(() => (isMP4 && item.video?.type === 'mp4' ? item.video.url : ''))
 
   const iframeSrc = useMemo(() => {
+    if (isMP4) return ''
     const originParam = playerOrigin ? `&origin=${encodeURIComponent(playerOrigin)}` : ''
     return (
       `${YT_BASE_ORIGIN}/embed/${item.youtube.video_id}` +
@@ -44,7 +50,7 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
       '&controls=0&playsinline=1&rel=0&enablejsapi=1' +
       originParam
     )
-  }, [item.youtube.video_id, playerOrigin])
+  }, [isMP4, item.youtube.video_id, playerOrigin])
 
   const postPlayerMessage = useCallback((func: string, args: unknown[] = []) => {
     const iframe = iframeRef.current
@@ -58,20 +64,42 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
   }, [iframeId])
 
   const syncPlayback = useCallback((shouldPlay: boolean) => {
+    if (isMP4) {
+      const vid = videoRef.current
+      if (!vid) return
+      if (shouldPlay) {
+        if (videoReadyRef.current) {
+          vid.play().catch(() => {})
+        }
+      } else {
+        vid.pause()
+      }
+      return
+    }
     if (!playerReadyRef.current) return
     postPlayerMessage(shouldPlay ? 'playVideo' : 'pauseVideo')
-  }, [postPlayerMessage])
+  }, [isMP4, postPlayerMessage])
 
   const syncMute = useCallback(() => {
+    if (isMP4) {
+      const vid = videoRef.current
+      if (vid) vid.muted = globalMuted
+      return
+    }
     if (!playerReadyRef.current) return
     postPlayerMessage(globalMuted ? 'mute' : 'unMute')
-  }, [postPlayerMessage])
+  }, [isMP4, postPlayerMessage])
 
   const toggleMute = useCallback(() => {
     globalMuted = !globalMuted
     emitMuteChange()
-    postPlayerMessage(globalMuted ? 'mute' : 'unMute')
-  }, [postPlayerMessage])
+    if (isMP4) {
+      const vid = videoRef.current
+      if (vid) vid.muted = globalMuted
+    } else {
+      postPlayerMessage(globalMuted ? 'mute' : 'unMute')
+    }
+  }, [isMP4, postPlayerMessage])
 
   useEffect(() => {
     activeStateRef.current = isActive
@@ -83,14 +111,50 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
   }, [isActive, shouldRender, syncPlayback, syncMute])
 
   useEffect(() => {
+    if (!isMP4 || !item.video?.url) {
+      setMp4Source('')
+      return
+    }
+    let cancelled = false
+    const cached = getPrefetchedVideoUrl(item.video.url)
+    if (cached) {
+      setMp4Source(cached)
+    } else {
+      setMp4Source(item.video.url)
+      prefetchVideoBlob(item.video.url)?.then((objectUrl) => {
+        if (!cancelled && objectUrl) {
+          setMp4Source(objectUrl)
+        }
+      })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [isMP4, item.video?.url])
+
+  useEffect(() => {
+    if (!isMP4) return
+    videoReadyRef.current = false
+  }, [isMP4, mp4Source])
+
+  const handleVideoReady = useCallback(() => {
+    if (!isMP4) return
+    videoReadyRef.current = true
+    if (activeStateRef.current) {
+      videoRef.current?.play().catch(() => {})
+    }
+  }, [isMP4])
+
+  useEffect(() => {
     const handleMuteChange = (value: boolean) => {
       setIsMuted((prev) => (prev === value ? prev : value))
     }
     return subscribeToMute(handleMuteChange)
   }, [])
 
+  // YouTube message listener (only for YouTube videos)
   useEffect(() => {
-    if (typeof window === 'undefined') return
+    if (isMP4 || typeof window === 'undefined') return
 
     playerReadyRef.current = false
 
@@ -125,7 +189,7 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
       listeningTimersRef.current = []
       playerReadyRef.current = false
     }
-  }, [iframeId, syncPlayback, postPlayerMessage])
+  }, [isMP4, iframeId, syncPlayback, postPlayerMessage])
 
   const handleIframeLoad = useCallback(() => {
     const iframe = iframeRef.current
@@ -162,17 +226,36 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
   return (
     <div className="short-card">
       <div className="video-container">
-        <iframe
-          ref={iframeRef}
-          id={iframeId}
-          src={iframeSrc}
-          title={item.youtube.title}
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-          allowFullScreen
-          className="video-iframe"
-          style={{ pointerEvents: 'auto' }}
-          onLoad={handleIframeLoad}
-        />
+        {isMP4 && item.video?.type === 'mp4' ? (
+          <video
+            ref={videoRef}
+            key={mp4Source || item.video.url}
+            src={mp4Source || item.video.url}
+            preload="auto"
+            autoPlay
+            loop
+            muted
+            playsInline
+            disablePictureInPicture
+            controlsList="nodownload nofullscreen noplaybackrate"
+            onLoadedData={handleVideoReady}
+            onCanPlay={handleVideoReady}
+            onCanPlayThrough={handleVideoReady}
+            className="video-native"
+          />
+        ) : (
+          <iframe
+            ref={iframeRef}
+            id={iframeId}
+            src={iframeSrc}
+            title={item.youtube.title}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            className="video-iframe"
+            style={{ pointerEvents: 'auto' }}
+            onLoad={handleIframeLoad}
+          />
+        )}
       </div>
 
       <button
@@ -217,7 +300,7 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
 
 export default memo(ShortCard, (prevProps, nextProps) => {
   return (
-    prevProps.item.youtube.video_id === nextProps.item.youtube.video_id &&
+    prevProps.item.id === nextProps.item.id &&
     prevProps.isActive === nextProps.isActive &&
     prevProps.shouldRender === nextProps.shouldRender
   )

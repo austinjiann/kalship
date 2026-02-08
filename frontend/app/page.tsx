@@ -7,9 +7,11 @@ import Image from 'next/image'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Iphone } from '@/components/ui/iphone'
 import Feed, { FeedRef } from '@/components/Feed'
-import { KalshiMarket } from '@/types'
+import { KalshiMarket, FeedItem } from '@/types'
 import { useVideoQueue } from '@/hooks/useVideoQueue'
 import PriceChart, { type PriceChartReadyPayload } from '@/components/PriceChart'
+import BetPlacementCard from '@/components/BetPlacementCard'
+import { findVisualizationVideo } from '@/mystery'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const MAX_PREFETCH_CONCURRENCY = 3
@@ -100,15 +102,22 @@ const BgWrapper = ({ children, blurred = true }: { children: ReactNode; blurred?
   </div>
 )
 
-function SpeechBubble({ text, large }: { text: string; large?: boolean }) {
+function SpeechBubble({ text, large, medium }: { text: string; large?: boolean; medium?: boolean }) {
+  const sizeClass = medium
+    ? 'px-6 py-4 max-w-[380px] text-sm leading-snug'
+    : large
+      ? 'px-10 py-6 max-w-[520px] text-xl leading-relaxed'
+      : 'px-6 py-4 max-w-[300px] text-sm'
   return (
     <div
-      className={`relative bg-white/95 text-gray-900 rounded-2xl font-medium ${
-        large ? 'px-10 py-6 max-w-[520px] text-xl leading-relaxed' : 'px-6 py-4 max-w-[300px] text-sm'
-      }`}
+      className={`relative bg-white/95 text-gray-900 rounded-2xl font-medium ${sizeClass}`}
       style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.25), 0 1px 4px rgba(0,0,0,0.1)', border: '1px solid rgba(0,0,0,0.12)' }}
     >
-      {text}
+      {text.includes('\n') ? (
+        <div className="whitespace-pre-line">{text}</div>
+      ) : (
+        text
+      )}
       {/* Triangle pointer at bottom-center */}
       <div
         className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-0 h-0"
@@ -123,7 +132,7 @@ function SpeechBubble({ text, large }: { text: string; large?: boolean }) {
 }
 
 export default function Home() {
-  const { feedItems, stats, feedError, isProcessing, processQueue, retryFailed, clearQueue } = useVideoQueue()
+  const { feedItems, stats, feedError, isProcessing, processQueue, retryFailed, clearQueue, injectFeedItem } = useVideoQueue()
   const [currentMarkets, setCurrentMarkets] = useState<KalshiMarket[]>([])
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [imgError, setImgError] = useState(false)
@@ -138,6 +147,25 @@ export default function Home() {
   const isFeed = stage === 5
   const [showKalshiWarning, setShowKalshiWarning] = useState(false)
   const [pendingKalshiUrl, setPendingKalshiUrl] = useState<string | null>(null)
+  const [activeIndex, setActiveIndex] = useState(0)
+
+  // Joe popup state
+  const [showJoePopup, setShowJoePopup] = useState(false)
+  const [pendingBetSide, setPendingBetSide] = useState<'YES' | 'NO'>('YES')
+  const [pendingBetMarket, setPendingBetMarket] = useState<KalshiMarket | null>(null)
+  const [seenJoeForMarkets, setSeenJoeForMarkets] = useState<Set<string>>(new Set())
+  const [joeAlreadyQueued, setJoeAlreadyQueued] = useState(false)
+
+  // Bet placement state
+  const [showBetPlacement, setShowBetPlacement] = useState(false)
+  const [betPlacementSide, setBetPlacementSide] = useState<'YES' | 'NO'>('YES')
+  const [isCurrentItemInjected, setIsCurrentItemInjected] = useState(false)
+  const [currentThumbnail, setCurrentThumbnail] = useState('')
+
+  // Joe advice state
+  const [showJoeAdvice, setShowJoeAdvice] = useState(false)
+  const [joeAdviceText, setJoeAdviceText] = useState('')
+  const [joeAdviceLoading, setJoeAdviceLoading] = useState(false)
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -395,14 +423,110 @@ export default function Home() {
   })()
 
   const handleBet = (side: 'YES' | 'NO') => {
-    console.log(`Bet placed: ${side} on ${expandedMarket?.ticker}`)
+    if (!expandedMarket) return
+
+    // AI-generated videos → straight to bet placement card
+    if (isCurrentItemInjected) {
+      setBetPlacementSide(side)
+      setShowBetPlacement(true)
+      return
+    }
+
+    // Non-AI videos → show Joe popup
+    setPendingBetSide(side)
+    setPendingBetMarket(expandedMarket)
+    const alreadySeen = seenJoeForMarkets.has(expandedMarket.ticker)
+    setJoeAlreadyQueued(alreadySeen)
+    setShowJoePopup(true)
   }
 
-  const handleCurrentItemChange = useCallback((item: { kalshi?: KalshiMarket[] }) => {
+  const getBaseIndexForDisplayIndex = useCallback((displayIndex: number) => {
+    if (feedItems.length === 0) return 0
+    const clampedIndex = Math.max(0, Math.min(displayIndex, feedItems.length - 1))
+    let baseCount = 0
+    for (let i = 0; i <= clampedIndex; i++) {
+      const candidate = feedItems[i]
+      if (candidate && !candidate.isInjected) {
+        baseCount += 1
+      }
+    }
+    return Math.max(0, baseCount - 1)
+  }, [feedItems])
+
+  const handleJoeDismiss = useCallback(() => {
+    if (pendingBetMarket && !seenJoeForMarkets.has(pendingBetMarket.ticker)) {
+      // Mark this market as seen + inject video (only first time)
+      setSeenJoeForMarkets(prev => new Set(prev).add(pendingBetMarket.ticker))
+
+      // Find a visualization video
+      const question = pendingBetMarket.question || ''
+      const keywords = question.split(/\s+/).filter(w => w.length > 3)
+      const vizVideo = findVisualizationVideo(keywords)
+
+      if (vizVideo && vizVideo.source.type === 'mp4') {
+        const injectedItem: FeedItem = {
+          id: `injected-${Date.now()}`,
+          youtube: { video_id: '', title: pendingBetMarket.question, thumbnail: '', channel: '' },
+          video: { type: 'mp4', url: vizVideo.source.url, title: vizVideo.label },
+          kalshi: [pendingBetMarket],
+          isInjected: true,
+          injectedByBetSide: pendingBetSide,
+        }
+        const currentBaseIndex = getBaseIndexForDisplayIndex(activeIndex)
+        const randomLag = Math.floor(Math.random() * 4) + 4 // 4-7 videos later
+        const insertAfterBaseIndex = currentBaseIndex + randomLag
+        injectFeedItem(injectedItem, insertAfterBaseIndex)
+      }
+    }
+    setShowJoePopup(false)
+    setPendingBetMarket(null)
+  }, [pendingBetMarket, pendingBetSide, activeIndex, injectFeedItem, getBaseIndexForDisplayIndex, seenJoeForMarkets])
+
+  const handleBetSubmit = useCallback(async (data: { side: 'YES' | 'NO'; amount: number }) => {
+    setShowBetPlacement(false)
+    if (!expandedMarket) return
+
+    setJoeAdviceLoading(true)
+    setJoeAdviceText('')
+    setShowJoeAdvice(true)
+
+    try {
+      const res = await fetch(`${API_URL}/shorts/advice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: expandedMarket.question,
+          side: data.side,
+          amount: data.amount,
+          yes_price: expandedMarket.yes_price,
+          no_price: expandedMarket.no_price,
+        }),
+      })
+      const json = await res.json()
+      setJoeAdviceText(json.advice || "I'm at a loss for words on this one!")
+    } catch {
+      setJoeAdviceText(`Hmm, I'm having trouble thinking right now... but betting $${data.amount} on ${data.side}? Just make sure you're okay losing it!`)
+    } finally {
+      setJoeAdviceLoading(false)
+    }
+  }, [expandedMarket])
+
+  const dismissJoeAdvice = useCallback(() => {
+    setShowJoeAdvice(false)
+    setJoeAdviceText('')
+  }, [])
+
+  const handleCurrentItemChange = useCallback((item: FeedItem) => {
     setCurrentMarkets(item.kalshi ?? [])
     setSelectedIdx(0)
     setImgError(false)
-  }, [])
+    setShowBetPlacement(false)
+    setIsCurrentItemInjected(!!item.isInjected)
+    setCurrentThumbnail(item.youtube?.thumbnail || '')
+    // Track active index for injection
+    const idx = feedItems.findIndex(fi => fi.id === item.id)
+    if (idx >= 0) setActiveIndex(idx)
+  }, [feedItems])
 
   const handleChartReady = useCallback(
     (ticker: string, payload?: PriceChartReadyPayload) => {
@@ -418,11 +542,16 @@ export default function Home() {
   )
 
   const handleKalshiClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+    const currentFeedItem = feedItems[activeIndex]
+    // On AI-generated (injected MP4) videos, open Kalshi directly without Joe popup
+    if (currentFeedItem?.video?.type === 'mp4' || currentFeedItem?.isInjected) {
+      return // let the default <a> navigation happen
+    }
     e.preventDefault()
     const url = e.currentTarget.href
     setPendingKalshiUrl(url)
     setShowKalshiWarning(true)
-  }, [])
+  }, [feedItems, activeIndex])
 
   const dismissKalshiWarning = useCallback(() => {
     setShowKalshiWarning(false)
@@ -437,17 +566,19 @@ export default function Home() {
     setPendingKalshiUrl(null)
   }, [pendingKalshiUrl])
 
-  // Escape key dismisses Kalshi warning
+  // Escape key dismisses overlays
   useEffect(() => {
-    if (!showKalshiWarning) return
+    if (!showKalshiWarning && !showJoePopup && !showJoeAdvice) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        dismissKalshiWarning()
+        if (showJoeAdvice) dismissJoeAdvice()
+        else if (showJoePopup) handleJoeDismiss()
+        else if (showKalshiWarning) dismissKalshiWarning()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [showKalshiWarning, dismissKalshiWarning])
+  }, [showKalshiWarning, showJoePopup, showJoeAdvice, dismissKalshiWarning, handleJoeDismiss, dismissJoeAdvice])
 
   const currentAnimation = waitingForFeed && stage === 4 ? 'idle' : isFeed ? 'idle' : (TIPS[stage]?.animation ?? 'idle')
   const waitingMessage = feedItems.length === 0 ? 'Loading shorts...' : 'Hang tight...'
@@ -458,7 +589,7 @@ export default function Home() {
 
   // Phone content shared by both tutorial and feed views
   const phoneContent = feedItems.length > 0 ? (
-    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} paused={showKalshiWarning} />
+    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} paused={showKalshiWarning || showJoePopup || showJoeAdvice} />
   ) : (
     <div className="flex flex-col items-center justify-center h-full bg-black gap-3 p-4">
       <div className="text-white/30 text-sm">
@@ -544,14 +675,14 @@ export default function Home() {
               key="phone"
               className="relative flex-shrink-0"
               initial={{ y: 120, opacity: 0, rotate: 3 }}
-              animate={showKalshiWarning
+              animate={(showKalshiWarning || showJoePopup || showJoeAdvice)
                 ? { y: 40, opacity: 0.1, rotate: 0, scale: 0.95 }
                 : { y: 0, opacity: 1, rotate: 0, scale: 1 }
               }
               transition={{ duration: 0.7, ease: easeCubic }}
               style={{
                 filter: 'drop-shadow(0 20px 60px rgba(0,0,0,0.5))',
-                pointerEvents: showKalshiWarning ? 'none' : 'auto',
+                pointerEvents: (showKalshiWarning || showJoePopup || showJoeAdvice) ? 'none' : 'auto',
               }}
             >
               <Iphone className="w-[380px] max-h-screen" frameColor="#1a1a1a">
@@ -579,9 +710,9 @@ export default function Home() {
               }}
             >
               <div className="flex items-start gap-3 mb-2">
-                {expandedMarket?.image_url && !imgError ? (
+                {(expandedMarket?.image_url || currentThumbnail) && !imgError ? (
                   <Image
-                    src={expandedMarket.image_url}
+                    src={expandedMarket?.image_url || currentThumbnail}
                     alt=""
                     width={40}
                     height={40}
@@ -625,13 +756,13 @@ export default function Home() {
               key="feed-bet"
               className="flex flex-col gap-3 w-[640px] flex-shrink-0"
               initial={{ x: 40, opacity: 0, rotate: 2 }}
-              animate={showKalshiWarning
+              animate={(showKalshiWarning || showJoePopup || showJoeAdvice)
                 ? { x: 80, opacity: 0, rotate: 0 }
                 : { x: 0, opacity: 1, rotate: 0 }
               }
               exit={{ x: 40, opacity: 0 }}
               transition={{ duration: 0.5, ease: 'easeOut' }}
-              style={{ pointerEvents: showKalshiWarning ? 'none' : 'auto' }}
+              style={{ pointerEvents: (showKalshiWarning || showJoePopup || showJoeAdvice) ? 'none' : 'auto' }}
             >
               <div
                 className="rounded-2xl p-5"
@@ -643,9 +774,9 @@ export default function Home() {
                 }}
               >
                 <div className="flex items-start gap-3 mb-3">
-                  {expandedMarket.image_url && !imgError ? (
+                  {(expandedMarket.image_url || currentThumbnail) && !imgError ? (
                     <Image
-                      src={expandedMarket.image_url}
+                      src={expandedMarket.image_url || currentThumbnail}
                       alt=""
                       width={48}
                       height={48}
@@ -774,6 +905,200 @@ export default function Home() {
           )}
         </AnimatePresence>
 
+        {/* Bet Placement Card */}
+        <AnimatePresence>
+          {showBetPlacement && expandedMarket && (
+            <motion.div
+              key="bet-placement"
+              className="fixed inset-0 z-40 flex items-center justify-center"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+            >
+              <motion.div
+                className="fixed inset-0"
+                style={{ background: 'rgba(0, 0, 0, 0.5)', backdropFilter: 'blur(4px)' }}
+                onClick={() => setShowBetPlacement(false)}
+              />
+              <motion.div
+                className="relative z-50 w-[400px]"
+                initial={{ y: 30, opacity: 0, scale: 0.95 }}
+                animate={{ y: 0, opacity: 1, scale: 1 }}
+                exit={{ y: 20, opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.4, ease: easeCubic }}
+              >
+                <BetPlacementCard
+                  market={expandedMarket}
+                  initialSide={betPlacementSide}
+                  onSubmit={handleBetSubmit}
+                  onClose={() => setShowBetPlacement(false)}
+                />
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Joe popup overlay on first YES/NO click */}
+        <AnimatePresence>
+          {showJoePopup && (
+            <>
+              <motion.div
+                key="joe-backdrop"
+                className="fixed inset-0 z-40"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                style={{ background: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(8px)' }}
+                onClick={handleJoeDismiss}
+              />
+              <motion.div
+                key="joe-popup"
+                className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <div className="flex flex-col items-center pointer-events-auto">
+                  <motion.div
+                    initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.5, delay: 0.2, ease: easeCubic }}
+                  >
+                    <SpeechBubble
+                      text={joeAlreadyQueued
+                        ? "I've already added a video for this bet into your queue! Keep scrolling and you'll find it."
+                        : "Hey! I've added a video into your video queue to help you visualize what this bet looks like. Keep on scrolling and decide if you really want to bet after!"
+                      }
+                      large
+                    />
+                  </motion.div>
+                  <motion.div
+                    className="pointer-events-none"
+                    initial={{ opacity: 0, x: 200 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 200 }}
+                    transition={{ duration: 0.6, ease: easeCubic }}
+                  >
+                    <CharacterPreview
+                      animation="wave"
+                      size={{ width: 500, height: 600 }}
+                      rotationY={0}
+                    />
+                  </motion.div>
+                  <motion.div
+                    className="flex flex-col items-center gap-4 -mt-8 relative z-10"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.4, delay: 0.35, ease: easeCubic }}
+                  >
+                    <button
+                      onClick={handleJoeDismiss}
+                      className="px-6 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/40 hover:border-emerald-500/60"
+                    >
+                      Got it, keep scrolling!
+                    </button>
+                  </motion.div>
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+
+        {/* Joe advice overlay on bet submission */}
+        <AnimatePresence>
+          {showJoeAdvice && (
+            <>
+              <motion.div
+                key="joe-advice-backdrop"
+                className="fixed inset-0 z-40"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                style={{ background: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(8px)' }}
+                onClick={!joeAdviceLoading ? dismissJoeAdvice : undefined}
+              />
+              <motion.div
+                key="joe-advice"
+                className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <div className="flex flex-col items-center pointer-events-auto mt-24">
+                  <motion.div
+                    initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.5, delay: 0.2, ease: easeCubic }}
+                  >
+                    <SpeechBubble
+                      text={joeAdviceLoading ? 'Let me think about this one...' : joeAdviceText}
+                      medium
+                    />
+                  </motion.div>
+                  <motion.div
+                    className="pointer-events-none"
+                    initial={{ opacity: 0, y: 40 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 20 }}
+                    transition={{ duration: 0.5, ease: easeCubic }}
+                  >
+                    <CharacterPreview
+                      animation="point"
+                      size={{ width: 400, height: 480 }}
+                      rotationY={0}
+                    />
+                  </motion.div>
+                  {!joeAdviceLoading && (
+                    <motion.div
+                      className="flex items-center gap-3 -mt-8 relative z-10"
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.4, delay: 0.35, ease: easeCubic }}
+                    >
+                      <button
+                        onClick={dismissJoeAdvice}
+                        className="px-5 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer bg-white/5 border border-white/20 text-white/70 hover:bg-white/10 hover:border-white/40"
+                      >
+                        Go Back to Feed
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (expandedMarket) {
+                            window.open(`https://kalshi.com/events/${expandedMarket.event_ticker || expandedMarket.ticker}`, '_blank')
+                          }
+                          dismissJoeAdvice()
+                        }}
+                        className="px-5 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/40 hover:border-emerald-500/60"
+                      >
+                        Confirm Bet
+                      </button>
+                    </motion.div>
+                  )}
+                  {joeAdviceLoading && (
+                    <motion.div
+                      className="flex items-center gap-2 -mt-8"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                    >
+                      <span className="inline-block w-4 h-4 border-2 border-white/50 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-white/50 text-sm">Thinking...</span>
+                    </motion.div>
+                  )}
+                </div>
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+
         {/* Kalshi external link warning overlay */}
         <AnimatePresence>
           {showKalshiWarning && (
@@ -823,7 +1148,7 @@ export default function Home() {
                     <CharacterPreview
                       animation="point"
                       size={{ width: 500, height: 600 }}
-                      rotationY={0.3}
+                      rotationY={0}
                     />
                   </motion.div>
 
