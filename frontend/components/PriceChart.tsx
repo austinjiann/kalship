@@ -22,6 +22,7 @@ export type PriceChartReadyPayload = {
   points: number
   spanSeconds: number
   status: 'ok' | 'empty' | 'error'
+  data?: { ts: number; price: number }[]
 }
 
 interface PriceChartProps {
@@ -75,6 +76,9 @@ const getTimeSpanSeconds = (data: AreaData[]): number => {
   return Math.max(0, toTimestamp(data[data.length - 1].time) - toTimestamp(data[0].time))
 }
 
+const fromChartData = (data: AreaData[]): { ts: number; price: number }[] =>
+  data.map((d) => ({ ts: toTimestamp(d.time), price: d.value }))
+
 const toChartData = (points: { ts: number; price: number }[] = []): AreaData[] => {
   const byTimestamp = new Map<number, number>()
 
@@ -95,6 +99,7 @@ const toChartData = (points: { ts: number; price: number }[] = []): AreaData[] =
 function PriceChartInner({
   ticker,
   seriesTicker,
+  priceHistory,
   createdTime,
   openTime,
   marketStartTs,
@@ -108,6 +113,7 @@ function PriceChartInner({
   useEffect(() => {
     onReadyRef.current = onReady
   }, [onReady])
+
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -178,10 +184,26 @@ function PriceChartInner({
     let currentSpanSeconds = 0
     let cancelled = false
     let readyNotified = false
+    let lastStatus: PriceChartReadyPayload['status'] | null = null
+    let bestSpanSeconds = 0
+    let bestPoints = 0
 
     const notifyReady = (payload: PriceChartReadyPayload) => {
-      if (readyNotified || cancelled) return
+      if (cancelled) return
+      const improvedOk =
+        payload.status === 'ok' &&
+        (payload.spanSeconds > bestSpanSeconds ||
+          (payload.spanSeconds === bestSpanSeconds && payload.points > bestPoints))
+      const statusChanged = payload.status !== lastStatus
+      if (readyNotified && !improvedOk && !(statusChanged && payload.status !== 'ok')) {
+        return
+      }
+      if (payload.status === 'ok') {
+        bestSpanSeconds = Math.max(bestSpanSeconds, payload.spanSeconds)
+        bestPoints = Math.max(bestPoints, payload.points)
+      }
       readyNotified = true
+      lastStatus = payload.status
       onReadyRef.current?.(ticker, payload)
     }
 
@@ -208,10 +230,28 @@ function PriceChartInner({
       return data
     }
 
+    const seedFromPrefetchedHistory = () => {
+      if (!priceHistory || priceHistory.length === 0) {
+        return
+      }
+      const accepted = setSeriesData(priceHistory)
+      if (accepted.length === 0) {
+        return
+      }
+      notifyReady({
+        points: accepted.length,
+        spanSeconds: getTimeSpanSeconds(accepted),
+        status: 'ok',
+        data: fromChartData(accepted),
+      })
+    }
+
+    seedFromPrefetchedHistory()
+
     const fetchFullHistory = async () => {
       try {
         if (!ticker || !seriesTicker) {
-          notifyReady({ points: 0, spanSeconds: 0, status: 'error' })
+          notifyReady({ points: 0, spanSeconds: 0, status: 'error', data: [] })
           return
         }
 
@@ -248,13 +288,37 @@ function PriceChartInner({
 
         if (cancelled) return
         if (candles.length === 0) {
-          notifyReady({ points: 0, spanSeconds: 0, status: 'empty' })
+          // Retry without start_ts to get any available historical data
+          if (startTs) {
+            const retryParams = new URLSearchParams({
+              ticker,
+              series_ticker: seriesTicker,
+              period: '1440',
+              end_ts: `${Math.floor(Date.now() / 1000)}`,
+              hours: `${24 * 365}`,
+            })
+            try {
+              const retryRes = await fetch(`${API_URL}/shorts/candlesticks?${retryParams}`)
+              if (retryRes.ok && !cancelled) {
+                const retryJson = await retryRes.json()
+                const retryCandles: { ts: number; price: number }[] = Array.isArray(retryJson.candlesticks) ? retryJson.candlesticks : []
+                if (retryCandles.length > 0) {
+                  const retryAccepted = setSeriesData(retryCandles, { requireWiderRange: true })
+                  if (retryAccepted.length > 0) {
+                    notifyReady({ points: retryAccepted.length, spanSeconds: getTimeSpanSeconds(retryAccepted), status: 'ok', data: fromChartData(retryAccepted) })
+                    return
+                  }
+                }
+              }
+            } catch { /* fallthrough to empty */ }
+          }
+          notifyReady({ points: 0, spanSeconds: 0, status: 'empty', data: [] })
           return
         }
 
         const accepted = setSeriesData(candles, { requireWiderRange: true })
         if (accepted.length === 0) {
-          notifyReady({ points: 0, spanSeconds: 0, status: 'empty' })
+          notifyReady({ points: 0, spanSeconds: 0, status: 'empty', data: [] })
           return
         }
 
@@ -262,9 +326,10 @@ function PriceChartInner({
           points: accepted.length,
           spanSeconds: getTimeSpanSeconds(accepted),
           status: 'ok',
+          data: fromChartData(accepted),
         })
       } catch {
-        notifyReady({ points: 0, spanSeconds: 0, status: 'error' })
+        notifyReady({ points: 0, spanSeconds: 0, status: 'error', data: [] })
       }
     }
     fetchFullHistory()
@@ -283,9 +348,11 @@ function PriceChartInner({
       chartRef.current = null
       seriesRef.current = null
     }
-  }, [ticker, seriesTicker, createdTime, openTime, marketStartTs])
+  }, [ticker, seriesTicker, priceHistory, createdTime, openTime, marketStartTs])
 
-  return <div ref={containerRef} className="w-full price-chart-container" style={{ height: 200 }} />
+  return (
+    <div ref={containerRef} className="w-full price-chart-container" style={{ height: 200 }} />
+  )
 }
 
 export default PriceChartInner

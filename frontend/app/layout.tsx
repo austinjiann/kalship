@@ -18,8 +18,8 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "QHacks",
-  description: "QHacks prediction market app",
+  title: "Kalship",
+  description: "Scroll to bet",
 };
 
 export default function RootLayout({

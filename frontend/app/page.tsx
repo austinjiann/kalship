@@ -1,16 +1,54 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import dynamic from 'next/dynamic'
+import Image from 'next/image'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Iphone } from '@/components/ui/iphone'
 import Feed, { FeedRef } from '@/components/Feed'
 import { KalshiMarket } from '@/types'
 import { useVideoQueue } from '@/hooks/useVideoQueue'
+import PriceChart, { type PriceChartReadyPayload } from '@/components/PriceChart'
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const MAX_PREFETCH_CONCURRENCY = 3
+
+const toUnixSeconds = (value?: string | number | null): number | null => {
+  if (value == null) return null
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) return null
+    return value > 10_000_000_000 ? Math.trunc(value / 1000) : Math.trunc(value)
+  }
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (/^\d+$/.test(trimmed)) {
+    const numeric = Number(trimmed)
+    if (!Number.isFinite(numeric) || numeric <= 0) return null
+    return numeric > 10_000_000_000 ? Math.trunc(numeric / 1000) : Math.trunc(numeric)
+  }
+  const normalizedFraction = trimmed.replace(
+    /(\.\d{3})\d+(?=Z|[+-]\d{2}:\d{2}$)/,
+    '$1'
+  )
+  const parsedMs = Date.parse(normalizedFraction)
+  if (Number.isNaN(parsedMs) || parsedMs <= 0) return null
+  return Math.trunc(parsedMs / 1000)
+}
+
+const resolveMarketStartTs = (market: KalshiMarket): number | null => {
+  if (
+    typeof market.market_start_ts === 'number' &&
+    Number.isFinite(market.market_start_ts) &&
+    market.market_start_ts > 0
+  ) {
+    return Math.trunc(market.market_start_ts)
+  }
+  return toUnixSeconds(market.created_time) ?? toUnixSeconds(market.open_time)
+}
 
 const CharacterPreview = dynamic(() => import('@/components/CharacterPreview'), { ssr: false })
-const PriceChart = dynamic(() => import('@/components/PriceChart'), { ssr: false })
 
 const TIPS = [
   { text: 'Welcome to Kalship!', animation: 'wave' as const },
@@ -21,6 +59,7 @@ const TIPS = [
 ]
 
 const FEED_TIP = 'Swipe up for the next short'
+const SPEECH_BUBBLE_OFFSET_PX = 48
 
 const easeCubic = [0.22, 1, 0.36, 1] as const
 
@@ -61,10 +100,13 @@ const BgWrapper = ({ children, blurred = true }: { children: ReactNode; blurred?
   </div>
 )
 
-function SpeechBubble({ text }: { text: string }) {
+function SpeechBubble({ text, large }: { text: string; large?: boolean }) {
   return (
     <div
-      className="relative bg-white/95 text-gray-900 rounded-2xl px-5 py-3 max-w-[280px] text-sm font-medium shadow-lg"
+      className={`relative bg-white/95 text-gray-900 rounded-2xl font-medium ${
+        large ? 'px-10 py-6 max-w-[520px] text-xl leading-relaxed' : 'px-6 py-4 max-w-[300px] text-sm'
+      }`}
+      style={{ boxShadow: '0 4px 24px rgba(0,0,0,0.25), 0 1px 4px rgba(0,0,0,0.1)', border: '1px solid rgba(0,0,0,0.12)' }}
     >
       {text}
       {/* Triangle pointer at bottom-center */}
@@ -85,10 +127,196 @@ export default function Home() {
   const [currentMarkets, setCurrentMarkets] = useState<KalshiMarket[]>([])
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [imgError, setImgError] = useState(false)
-  const [graphReadyByTicker, setGraphReadyByTicker] = useState<Record<string, boolean>>({})
+  const [historyByTicker, setHistoryByTicker] = useState<Record<string, { ts: number; price: number }[]>>({})
+  const [historyLoadingByTicker, setHistoryLoadingByTicker] = useState<Record<string, boolean>>({})
+  const [chartStatusByTicker, setChartStatusByTicker] = useState<Record<string, PriceChartReadyPayload['status']>>({})
   const [stage, setStage] = useState(0) // 0-4 = tutorial, 5 = feed
   const [waitingForFeed, setWaitingForFeed] = useState(false)
   const feedRef = useRef<FeedRef>(null)
+  const historyFetchInFlight = useRef<Set<string>>(new Set())
+  const historyByTickerRef = useRef(historyByTicker)
+  const isFeed = stage === 5
+  const [showKalshiWarning, setShowKalshiWarning] = useState(false)
+  const [pendingKalshiUrl, setPendingKalshiUrl] = useState<string | null>(null)
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    historyByTickerRef.current = historyByTicker
+  }, [historyByTicker])
+
+  // Hydrate historyByTicker from sessionStorage on mount
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('history_cache')
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          setHistoryByTicker(parsed)
+        }
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  const updateHistoryCache = useCallback((ticker: string, data?: { ts: number; price: number }[]) => {
+    setHistoryByTicker((prev) => {
+      const hasExisting = Object.prototype.hasOwnProperty.call(prev, ticker)
+      const sanitized = Array.isArray(data) ? data : []
+      if (sanitized.length === 0) {
+        if (hasExisting) {
+          return prev
+        }
+        const next = { ...prev, [ticker]: [] }
+        try { sessionStorage.setItem('history_cache', JSON.stringify(next)) } catch { /* quota */ }
+        return next
+      }
+      if (hasExisting && (prev[ticker]?.length ?? 0) >= sanitized.length) {
+        return prev
+      }
+      const next = { ...prev, [ticker]: sanitized }
+      try { sessionStorage.setItem('history_cache', JSON.stringify(next)) } catch { /* quota */ }
+      return next
+    })
+  }, [])
+
+  const prefetchMarkets = useMemo(() => {
+    const deduped: Record<string, KalshiMarket & { series_ticker: string }> = {}
+    for (const item of feedItems) {
+      const market = item.kalshi?.[0]
+      if (!market || !market.series_ticker || !market.ticker) continue
+      if (!deduped[market.ticker]) {
+        deduped[market.ticker] = market as KalshiMarket & { series_ticker: string }
+      }
+    }
+    return Object.values(deduped)
+  }, [feedItems])
+
+  const allMarkets = useMemo(() => {
+    const deduped: Record<string, KalshiMarket & { series_ticker: string }> = {}
+    for (const item of feedItems) {
+      for (const market of item.kalshi ?? []) {
+        if (!market || !market.series_ticker || !market.ticker) continue
+        if (!deduped[market.ticker]) {
+          deduped[market.ticker] = market as KalshiMarket & { series_ticker: string }
+        }
+      }
+    }
+    return Object.values(deduped)
+  }, [feedItems])
+
+  const { readyCount: readyMarketCount, totalCount: totalMarketCount } = useMemo(() => {
+    const total = prefetchMarkets.length
+    let ready = 0
+    for (const market of prefetchMarkets) {
+      const hasCached = Object.prototype.hasOwnProperty.call(historyByTicker, market.ticker)
+      const hasPrefilled = Array.isArray(market.price_history) && market.price_history.length > 0
+      if (hasCached || hasPrefilled) {
+        ready += 1
+      }
+    }
+    return { readyCount: ready, totalCount: total }
+  }, [prefetchMarkets, historyByTicker])
+
+  const chartsReady = totalMarketCount === 0 || readyMarketCount === totalMarketCount
+
+  useEffect(() => {
+    if (prefetchMarkets.length === 0) return
+    for (const market of prefetchMarkets) {
+      if (Array.isArray(market.price_history) && market.price_history.length > 0) {
+        updateHistoryCache(market.ticker, market.price_history)
+      }
+    }
+  }, [prefetchMarkets, updateHistoryCache])
+
+  const schedulePrefetch = useCallback(
+    (markets: (KalshiMarket & { series_ticker: string })[]) => {
+      let cancelled = false
+      if (markets.length === 0) return () => {}
+      const inFlightSet = historyFetchInFlight.current
+      const marketsToFetch = markets.filter((market) => {
+        if (!market.ticker || !market.series_ticker) return false
+        if (Object.prototype.hasOwnProperty.call(historyByTickerRef.current, market.ticker)) return false
+        if (Array.isArray(market.price_history) && market.price_history.length > 0) return false
+        if (inFlightSet.has(market.ticker)) return false
+        return true
+      })
+      if (marketsToFetch.length === 0) return () => {}
+
+      const queuedTickers = marketsToFetch.map((market) => market.ticker)
+      queuedTickers.forEach((ticker) => {
+        inFlightSet.add(ticker)
+        setHistoryLoadingByTicker((prev) => (prev[ticker] ? prev : { ...prev, [ticker]: true }))
+      })
+      const startedTickers = new Set<string>()
+
+      const fetchHistory = async (market: KalshiMarket & { series_ticker: string }) => {
+        startedTickers.add(market.ticker)
+        try {
+          const params = new URLSearchParams({
+            ticker: market.ticker,
+            series_ticker: market.series_ticker,
+            period: '1440',
+            end_ts: `${Math.floor(Date.now() / 1000)}`,
+          })
+          const startTs = resolveMarketStartTs(market)
+          if (startTs) {
+            params.set('start_ts', `${startTs}`)
+          } else {
+            params.set('hours', `${24 * 365}`)
+          }
+          const response = await fetch(`${API_URL}/shorts/candlesticks?${params.toString()}`)
+          if (!response.ok) {
+            throw new Error('Failed to fetch candlesticks')
+          }
+          const json = await response.json()
+          const candles: { ts: number; price: number }[] = Array.isArray(json.candlesticks)
+            ? json.candlesticks
+            : []
+          if (cancelled) return
+          updateHistoryCache(market.ticker, candles)
+        } catch (err) {
+          console.error(`[prefetch] Failed to load ${market.ticker}`, err)
+          if (!cancelled) {
+            updateHistoryCache(market.ticker, [])
+          }
+        } finally {
+          inFlightSet.delete(market.ticker)
+          setHistoryLoadingByTicker((prev) => {
+            if (!prev[market.ticker]) return prev
+            const next = { ...prev }
+            delete next[market.ticker]
+            return next
+          })
+        }
+      }
+
+      const runBatches = async () => {
+        const concurrency = Math.min(MAX_PREFETCH_CONCURRENCY, marketsToFetch.length)
+        for (let i = 0; i < marketsToFetch.length && !cancelled; i += concurrency) {
+          const batch = marketsToFetch.slice(i, i + concurrency)
+          await Promise.all(batch.map((market) => fetchHistory(market)))
+        }
+      }
+      runBatches()
+
+      return () => {
+        cancelled = true
+        for (const ticker of queuedTickers) {
+          if (!startedTickers.has(ticker)) {
+            inFlightSet.delete(ticker)
+            setHistoryLoadingByTicker((prev) => {
+              if (!prev[ticker]) return prev
+              const next = { ...prev }
+              delete next[ticker]
+              return next
+            })
+          }
+        }
+      }
+    },
+    [updateHistoryCache]
+  )
+
+  useEffect(() => schedulePrefetch(prefetchMarkets), [prefetchMarkets, schedulePrefetch])
 
   // Start processing immediately in background
   useEffect(() => {
@@ -97,35 +325,74 @@ export default function Home() {
     }
   }, [stats.pending, isProcessing, processQueue])
 
+  useEffect(() => {
+    if (!isFeed || currentMarkets.length === 0) return
+    const typed = currentMarkets.filter(
+      (market): market is KalshiMarket & { series_ticker: string } =>
+        Boolean(market.series_ticker && market.ticker)
+    )
+    if (typed.length === 0) return
+    return schedulePrefetch(typed)
+  }, [isFeed, currentMarkets, schedulePrefetch])
+
+  useEffect(() => {
+    if (!isFeed || allMarkets.length === 0) return
+    return schedulePrefetch(allMarkets)
+  }, [isFeed, allMarkets, schedulePrefetch])
+
+  const canEnterFeed = feedItems.length > 0 && chartsReady
+
   // Spacebar to advance tutorial stages
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.code === 'Space' && stage < 5) {
         e.preventDefault()
         if (stage === 4) {
-          if (feedItems.length > 0) {
+          if (canEnterFeed) {
             setStage(5)
+            setWaitingForFeed(false)
           } else {
             setWaitingForFeed(true)
           }
         } else {
-          setStage(s => s + 1)
+          setStage((s) => s + 1)
         }
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [stage, feedItems.length])
+  }, [stage, canEnterFeed])
 
-  // Auto-transition when feed becomes ready while waiting
+  // Auto-transition when feed + graphs become ready while waiting
   useEffect(() => {
-    if (waitingForFeed && feedItems.length > 0) {
-      const t = setTimeout(() => setStage(5), 800)
+    if (waitingForFeed && canEnterFeed) {
+      const t = setTimeout(() => {
+        setStage(5)
+        setWaitingForFeed(false)
+      }, 800)
       return () => clearTimeout(t)
     }
-  }, [waitingForFeed, feedItems.length])
+  }, [waitingForFeed, canEnterFeed])
 
   const expandedMarket = currentMarkets[selectedIdx] as KalshiMarket | undefined
+  const historyEntryExists = expandedMarket
+    ? Object.prototype.hasOwnProperty.call(historyByTicker, expandedMarket.ticker)
+    : false
+  const resolvedPriceHistory = expandedMarket
+    ? historyEntryExists
+      ? historyByTicker[expandedMarket.ticker]
+      : expandedMarket.price_history
+    : undefined
+  const chartStatus = expandedMarket ? chartStatusByTicker[expandedMarket.ticker] : undefined
+  const graphStatus: 'ready' | 'loading' | 'empty' = (() => {
+    if (!expandedMarket) return 'ready'
+    if (chartStatus === 'ok') return 'ready'
+    if (chartStatus === 'empty') return 'empty'
+    if (chartStatus === 'error') return 'loading'
+    if (historyLoadingByTicker[expandedMarket.ticker]) return 'loading'
+    if (!historyEntryExists) return 'loading'
+    return 'loading'
+  })()
 
   const handleBet = (side: 'YES' | 'NO') => {
     console.log(`Bet placed: ${side} on ${expandedMarket?.ticker}`)
@@ -137,82 +404,252 @@ export default function Home() {
     setImgError(false)
   }, [])
 
-  const handleChartReady = useCallback((ticker: string) => {
-    setGraphReadyByTicker((prev) => (prev[ticker] ? prev : { ...prev, [ticker]: true }))
+  const handleChartReady = useCallback(
+    (ticker: string, payload?: PriceChartReadyPayload) => {
+      if (!payload) return
+      setChartStatusByTicker((prev) => (prev[ticker] === payload.status ? prev : { ...prev, [ticker]: payload.status }))
+      if (payload.status === 'ok' && payload.data && payload.data.length > 0) {
+        updateHistoryCache(ticker, payload.data)
+      } else if (payload.status === 'empty') {
+        updateHistoryCache(ticker, [])
+      }
+    },
+    [updateHistoryCache, setChartStatusByTicker]
+  )
+
+  const handleKalshiClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault()
+    const url = e.currentTarget.href
+    setPendingKalshiUrl(url)
+    setShowKalshiWarning(true)
   }, [])
 
-  const currentAnimation = waitingForFeed && stage === 4 ? 'idle' : (TIPS[stage]?.animation ?? 'idle')
-  const currentTipText = waitingForFeed && stage === 4 ? 'Hang tight...' : (TIPS[stage]?.text ?? '')
+  const dismissKalshiWarning = useCallback(() => {
+    setShowKalshiWarning(false)
+    setPendingKalshiUrl(null)
+  }, [])
 
-  // rotationY per stage: point stages face toward phone, others centered
-  const currentRotationY = currentAnimation === 'point' ? 0.4 : 0.3
-  const isActiveMarketGraphReady = expandedMarket ? !!graphReadyByTicker[expandedMarket.ticker] : false
-  const isFeedScrollLocked = !expandedMarket || (expandedMarket.series_ticker ? !isActiveMarketGraphReady : false)
+  const proceedToKalshi = useCallback(() => {
+    if (pendingKalshiUrl) {
+      window.open(pendingKalshiUrl, '_blank')
+    }
+    setShowKalshiWarning(false)
+    setPendingKalshiUrl(null)
+  }, [pendingKalshiUrl])
 
-  // --- FEED VIEW (stage 5) ---
-  if (stage === 5) {
-    return (
-      <BgWrapper blurred>
-        <motion.div
-          className="relative flex items-center max-h-screen w-full -mt-4 sm:-mt-6 ml-[3%] gap-6"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.6 }}
-        >
-          {/* Character — left of phone */}
-          <div className="flex-shrink-0 z-20 -mr-2">
-            <div className="flex flex-col items-center">
-              <div className="relative bg-white/95 text-gray-900 rounded-2xl px-4 py-2 max-w-[220px] text-xs font-medium shadow-lg">
-                {FEED_TIP}
-                <div
-                  className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-0 h-0"
-                  style={{
-                    borderLeft: '6px solid transparent',
-                    borderRight: '6px solid transparent',
-                    borderTop: '6px solid rgba(255,255,255,0.95)',
-                  }}
+  // Escape key dismisses Kalshi warning
+  useEffect(() => {
+    if (!showKalshiWarning) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        dismissKalshiWarning()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [showKalshiWarning, dismissKalshiWarning])
+
+  const currentAnimation = waitingForFeed && stage === 4 ? 'idle' : isFeed ? 'idle' : (TIPS[stage]?.animation ?? 'idle')
+  const waitingMessage = feedItems.length === 0 ? 'Loading shorts...' : 'Hang tight...'
+  const currentTipText = isFeed ? FEED_TIP : (waitingForFeed && stage === 4 ? waitingMessage : (TIPS[stage]?.text ?? ''))
+
+  // rotationY per stage: point stages face toward phone, feed faces phone more
+  const currentRotationY = isFeed ? 0.8 : (currentAnimation === 'point' ? 0.4 : 0.3)
+
+  // Phone content shared by both tutorial and feed views
+  const phoneContent = feedItems.length > 0 ? (
+    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} />
+  ) : (
+    <div className="flex flex-col items-center justify-center h-full bg-black gap-3 p-4">
+      <div className="text-white/30 text-sm">
+        {isProcessing ? 'Loading shorts...' : feedError ? 'Error loading feed' : 'No shorts loaded'}
+      </div>
+      {feedError && (
+        <div className="text-red-400/80 text-xs text-center max-w-[260px]">
+          {feedError.includes('fetch') || feedError.includes('Failed to fetch')
+            ? 'Backend was unreachable.'
+            : feedError}
+        </div>
+      )}
+      {!isProcessing && (
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={retryFailed}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-white/15 text-white hover:bg-white/25 transition-colors"
+          >
+            Retry
+          </button>
+          <button
+            type="button"
+            onClick={clearQueue}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-white/10 text-white/60 hover:bg-white/15 hover:text-white/80 transition-colors"
+          >
+            Reset
+          </button>
+        </div>
+      )}
+    </div>
+  )
+
+  return (
+    <BgWrapper blurred={stage >= 2}>
+      <div
+        className="relative flex items-center justify-center max-h-screen w-full -mt-4 sm:-mt-6 gap-10"
+        style={{ fontFamily: 'var(--font-playfair), serif' }}
+      >
+        {/* Character + speech bubble — hidden in feed view */}
+        <AnimatePresence>
+          {!isFeed && (
+            <motion.div
+              key="character"
+              className="z-20 flex-shrink-0"
+              animate={{
+                x: stage >= 2 ? -480 : 0,
+              }}
+              exit={{ opacity: 0, x: -540 }}
+              transition={{ duration: 0.8, ease: easeCubic }}
+              style={{
+                position: stage >= 2 ? 'absolute' : 'relative',
+              }}
+            >
+              <div className="relative flex flex-col items-center">
+                <div className="relative w-full flex justify-center items-end mt-40 h-[68px]">
+                  <AnimatePresence mode="wait">
+                    <motion.div
+                      key={`tip-${stage}-${waitingForFeed}`}
+                      initial={{ opacity: 0, y: SPEECH_BUBBLE_OFFSET_PX + 10, rotate: -2 }}
+                      animate={{ opacity: 1, y: SPEECH_BUBBLE_OFFSET_PX, rotate: 0 }}
+                      exit={{ opacity: 0, y: SPEECH_BUBBLE_OFFSET_PX - 8, rotate: 2 }}
+                      transition={{ duration: 0.35, ease: 'easeOut' }}
+                    >
+                      <SpeechBubble text={currentTipText} large={stage < 2} />
+                    </motion.div>
+                  </AnimatePresence>
+                </div>
+                <CharacterPreview
+                  animation={currentAnimation}
+                  size={{ width: 500, height: 600 }}
+                  rotationY={currentRotationY}
                 />
               </div>
-              <CharacterPreview animation="idle" rotationY={0.8} />
-            </div>
-          </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
-          <div className="relative flex-shrink-0" style={{ filter: 'drop-shadow(0 20px 60px rgba(0,0,0,0.5))' }}>
-            <Iphone className="w-[380px] max-h-screen" frameColor="#1a1a1a">
-              <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} />
-            </Iphone>
-            {isFeedScrollLocked && (
-              <div className="absolute inset-0 z-30 flex items-start justify-center pointer-events-auto">
-                <div className="mt-5 rounded-full bg-black/55 border border-white/15 px-3 py-1 text-xs text-white/80">
-                  Syncing Kalshi graph...
-                </div>
-              </div>
-            )}
-          </div>
-
-          {currentMarkets.length > 0 && expandedMarket && (
+        {/* Persistent phone — mounts at stage 2, never unmounts */}
+        <AnimatePresence>
+          {stage >= 2 && (
             <motion.div
-              className="flex flex-col gap-3 w-[500px] flex-shrink-0"
+              key="phone"
+              className="relative flex-shrink-0"
+              initial={{ y: 120, opacity: 0, rotate: 3 }}
+              animate={showKalshiWarning
+                ? { y: 40, opacity: 0.1, rotate: 0, scale: 0.95 }
+                : { y: 0, opacity: 1, rotate: 0, scale: 1 }
+              }
+              transition={{ duration: 0.7, ease: easeCubic }}
+              style={{
+                filter: 'drop-shadow(0 20px 60px rgba(0,0,0,0.5))',
+                pointerEvents: showKalshiWarning ? 'none' : 'auto',
+              }}
+            >
+              <Iphone className="w-[380px] max-h-screen" frameColor="#1a1a1a">
+                {phoneContent}
+              </Iphone>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Tutorial bet card preview — stages 3-4 only */}
+        <AnimatePresence>
+          {!isFeed && stage >= 3 && (
+            <motion.div
+              key="tutorial-bet"
+              className="absolute left-[calc(50%+240px)] w-[360px] rounded-2xl p-3"
               initial={{ x: 40, opacity: 0, rotate: 2 }}
               animate={{ x: 0, opacity: 1, rotate: 0 }}
+              exit={{ x: 40, opacity: 0 }}
               transition={{ duration: 0.5, ease: 'easeOut' }}
+              style={{
+                background: 'rgba(30, 30, 30, 0.72)',
+                backdropFilter: 'blur(20px)',
+                border: '1px solid rgba(255, 255, 255, 0.15)',
+                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+              }}
             >
-              {/* Bet card */}
+              <div className="flex items-start gap-3 mb-2">
+                {expandedMarket?.image_url && !imgError ? (
+                  <Image
+                    src={expandedMarket.image_url}
+                    alt=""
+                    width={40}
+                    height={40}
+                    unoptimized
+                    className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
+                    onError={() => setImgError(true)}
+                  />
+                ) : (
+                  <div
+                    className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ background: 'rgba(16, 185, 129, 0.2)' }}
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-emerald-400">
+                      <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
+                    </svg>
+                  </div>
+                )}
+                <p className="text-white/90 text-xs leading-snug flex-1 line-clamp-2">
+                  {expandedMarket?.question ?? 'Will this event happen by end of month?'}
+                </p>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-white/50">View on Kalshi</span>
+                <div className="flex gap-2">
+                  <button className="px-3 py-1 text-xs glass-btn-yes">
+                    Yes {expandedMarket?.yes_price != null && <span className="opacity-70">{expandedMarket.yes_price}¢</span>}
+                  </button>
+                  <button className="px-3 py-1 text-xs glass-btn-no">
+                    No {expandedMarket?.no_price != null && <span className="opacity-70">{expandedMarket.no_price}¢</span>}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Feed bet card + chart — stage 5 */}
+        <AnimatePresence>
+          {isFeed && currentMarkets.length > 0 && expandedMarket && (
+            <motion.div
+              key="feed-bet"
+              className="flex flex-col gap-3 w-[640px] flex-shrink-0"
+              initial={{ x: 40, opacity: 0, rotate: 2 }}
+              animate={showKalshiWarning
+                ? { x: 80, opacity: 0, rotate: 0 }
+                : { x: 0, opacity: 1, rotate: 0 }
+              }
+              exit={{ x: 40, opacity: 0 }}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+              style={{ pointerEvents: showKalshiWarning ? 'none' : 'auto' }}
+            >
               <div
                 className="rounded-2xl p-5"
                 style={{
-                  background: 'rgba(30, 30, 30, 0.88)',
+                  background: 'rgba(30, 30, 30, 0.72)',
                   backdropFilter: 'blur(20px)',
                   border: '1px solid rgba(255, 255, 255, 0.15)',
                   boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
                 }}
               >
-                {/* Expanded market */}
                 <div className="flex items-start gap-3 mb-3">
                   {expandedMarket.image_url && !imgError ? (
-                    <img
+                    <Image
                       src={expandedMarket.image_url}
                       alt=""
+                      width={48}
+                      height={48}
+                      unoptimized
                       className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
                       onError={() => setImgError(true)}
                     />
@@ -236,6 +673,7 @@ export default function Home() {
                     href={`https://kalshi.com/events/${expandedMarket.event_ticker || expandedMarket.ticker}`}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={handleKalshiClick}
                     className="flex items-center gap-1 text-white/50 hover:text-white transition-colors"
                   >
                     View on Kalshi
@@ -259,7 +697,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* Scrollable sub-bet rows */}
                 {currentMarkets.length > 1 && (
                   <div className="mt-3 pt-3 border-t border-white/10 flex flex-col gap-1 max-h-[280px] overflow-y-auto scrollbar-thin">
                     {currentMarkets.map((m, i) => (
@@ -283,12 +720,11 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Separated chart card */}
               {expandedMarket.series_ticker && (
                 <div
                   className="rounded-2xl p-5"
                   style={{
-                    background: 'rgba(30, 30, 30, 0.88)',
+                    background: 'rgba(30, 30, 30, 0.72)',
                     backdropFilter: 'blur(20px)',
                     border: '1px solid rgba(255, 255, 255, 0.15)',
                     boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
@@ -298,10 +734,12 @@ export default function Home() {
                     <span className="text-xs text-white/40 uppercase tracking-wider">Yes Price</span>
                     <div className="flex items-center gap-1.5">
                       <span className="text-sm text-white/70 font-medium">{expandedMarket.yes_price}¢</span>
-                      {isActiveMarketGraphReady && expandedMarket.price_history && expandedMarket.price_history.length > 1 && (() => {
-                        const prices = expandedMarket.price_history!.map(p => p.price)
+                      {resolvedPriceHistory && resolvedPriceHistory.length > 1 && (() => {
+                        const prices = resolvedPriceHistory.map((p) => p.price).filter((v) => Number.isFinite(v))
+                        if (prices.length < 2) return null
                         const trending = prices[prices.length - 1] >= prices[0]
                         const diff = prices[prices.length - 1] - prices[0]
+                        if (!Number.isFinite(diff)) return null
                         return (
                           <span className={`text-xs font-medium ${trending ? 'text-emerald-400' : 'text-red-400'}`}>
                             {trending ? '+' : ''}{diff.toFixed(0)}¢ since open
@@ -310,182 +748,151 @@ export default function Home() {
                       })()}
                     </div>
                   </div>
-                  {!isActiveMarketGraphReady && (
-                    <div className="mb-2 text-xs text-white/60">Loading full market history...</div>
-                  )}
-                  <PriceChart
-                    key={expandedMarket.ticker}
-                    ticker={expandedMarket.ticker}
-                    seriesTicker={expandedMarket.series_ticker}
-                    priceHistory={expandedMarket.price_history}
-                    createdTime={expandedMarket.created_time}
-                    openTime={expandedMarket.open_time}
-                    marketStartTs={expandedMarket.market_start_ts}
-                    onReady={handleChartReady}
-                  />
+                  <div className="relative">
+                    {graphStatus !== 'ready' && (
+                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm rounded-xl pointer-events-none">
+                        {graphStatus === 'loading' ? (
+                          <>
+                            <div className="flex items-center gap-2 text-xs text-white/85">
+                              <span className="inline-block w-4 h-4 border-2 border-white/50 border-t-transparent rounded-full animate-spin" />
+                              Loading market history…
+                            </div>
+                          </>
+                        ) : (
+                          <div className="px-4 py-2 text-xs text-white/75 bg-white/5 rounded-lg border border-white/10">
+                            No price history yet
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <PriceChart
+                      key={expandedMarket.ticker}
+                      ticker={expandedMarket.ticker}
+                      seriesTicker={expandedMarket.series_ticker}
+                      priceHistory={resolvedPriceHistory}
+                      createdTime={expandedMarket.created_time}
+                      openTime={expandedMarket.open_time}
+                      marketStartTs={expandedMarket.market_start_ts}
+                      onReady={handleChartReady}
+                    />
+                  </div>
                 </div>
               )}
             </motion.div>
           )}
-        </motion.div>
-      </BgWrapper>
-    )
-  }
-
-  // --- TUTORIAL VIEW (stages 0-4) ---
-  return (
-    <BgWrapper blurred={stage >= 2}>
-      <div className="relative flex items-center justify-center max-h-screen w-full -mt-4 sm:-mt-6">
-        {/* Character + Speech Bubble */}
-        <motion.div
-          className="z-20"
-          animate={{
-            x: stage >= 2 ? -340 : 0,
-          }}
-          transition={{ duration: 0.8, ease: easeCubic }}
-          style={{ position: stage >= 2 ? 'absolute' : 'relative' }}
-        >
-          <div className="relative flex flex-col items-center">
-            {/* Speech bubble — positioned near character's head */}
-            <div className="relative w-full flex justify-center items-end mt-8 h-[68px]">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={`tip-${stage}-${waitingForFeed}`}
-                  initial={{ opacity: 0, y: 10, rotate: -2 }}
-                  animate={{ opacity: 1, y: 0, rotate: 0 }}
-                  exit={{ opacity: 0, y: -8, rotate: 2 }}
-                  transition={{ duration: 0.35, ease: 'easeOut' }}
-                >
-                  <SpeechBubble text={currentTipText} />
-                </motion.div>
-              </AnimatePresence>
-            </div>
-            <CharacterPreview
-              animation={currentAnimation}
-              size={{ width: 500, height: 600 }}
-              rotationY={currentRotationY}
-            />
-          </div>
-        </motion.div>
-
-        {/* Phone — slides in from below at stage 2 */}
-        <AnimatePresence>
-          {stage >= 2 && (
-            <motion.div
-              className="relative flex-shrink-0"
-              initial={{ y: 120, opacity: 0, rotate: 3 }}
-              animate={{ y: 0, opacity: 1, rotate: 0 }}
-              exit={{ y: 120, opacity: 0 }}
-              transition={{ duration: 0.7, ease: easeCubic }}
-              style={{ filter: 'drop-shadow(0 20px 60px rgba(0,0,0,0.5))' }}
-            >
-              <Iphone className="w-[380px] max-h-screen" frameColor="#1a1a1a">
-                {feedItems.length > 0 ? (
-                  <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} />
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-full bg-black gap-3 p-4">
-                    <div className="text-white/30 text-sm">
-                      {isProcessing ? 'Loading shorts...' : feedError ? 'Error loading feed' : 'No shorts loaded'}
-                    </div>
-                    {feedError && (
-                      <div className="text-red-400/80 text-xs text-center max-w-[260px]">
-                        {feedError.includes('fetch') || feedError.includes('Failed to fetch')
-                          ? 'Backend was unreachable.'
-                          : feedError}
-                      </div>
-                    )}
-                    {!isProcessing && (
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={retryFailed}
-                          className="px-4 py-2 rounded-lg text-sm font-medium bg-white/15 text-white hover:bg-white/25 transition-colors"
-                        >
-                          Retry
-                        </button>
-                        <button
-                          type="button"
-                          onClick={clearQueue}
-                          className="px-4 py-2 rounded-lg text-sm font-medium bg-white/10 text-white/60 hover:bg-white/15 hover:text-white/80 transition-colors"
-                        >
-                          Reset
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </Iphone>
-            </motion.div>
-          )}
         </AnimatePresence>
 
-        {/* Bet card — slides in from right at stage 3 */}
+        {/* Kalshi external link warning overlay */}
         <AnimatePresence>
-          {stage >= 3 && (
-            <motion.div
-              className="absolute left-[calc(50%+210px)] w-[320px] rounded-2xl p-3"
-              initial={{ x: 40, opacity: 0, rotate: 2 }}
-              animate={{ x: 0, opacity: 1, rotate: 0 }}
-              exit={{ x: 40, opacity: 0 }}
-              transition={{ duration: 0.5, ease: 'easeOut' }}
-              style={{
-                background: 'rgba(30, 30, 30, 0.88)',
-                backdropFilter: 'blur(20px)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
-                boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
-              }}
-            >
-              {/* Demo bet card content */}
-              <div className="flex items-start gap-3 mb-2">
-                {expandedMarket?.image_url && !imgError ? (
-                  <img
-                    src={expandedMarket.image_url}
-                    alt=""
-                    className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
-                    onError={() => setImgError(true)}
-                  />
-                ) : (
-                  <div
-                    className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
-                    style={{ background: 'rgba(16, 185, 129, 0.2)' }}
-                  >
-                    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 text-emerald-400">
-                      <path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/>
-                    </svg>
-                  </div>
-                )}
-                <p className="text-white/90 text-xs leading-snug flex-1 line-clamp-2">
-                  {expandedMarket?.question ?? 'Will this event happen by end of month?'}
-                </p>
-              </div>
+          {showKalshiWarning && (
+            <>
+              {/* Dimming backdrop */}
+              <motion.div
+                key="kalshi-backdrop"
+                className="fixed inset-0 z-40"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                style={{ background: 'rgba(0, 0, 0, 0.6)' }}
+                onClick={dismissKalshiWarning}
+              />
 
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-white/50">View on Kalshi</span>
-                <div className="flex gap-2">
-                  <button className="px-3 py-1 text-xs glass-btn-yes">
-                    Yes {expandedMarket?.yes_price != null && <span className="opacity-70">{expandedMarket.yes_price}¢</span>}
-                  </button>
-                  <button className="px-3 py-1 text-xs glass-btn-no">
-                    No {expandedMarket?.no_price != null && <span className="opacity-70">{expandedMarket.no_price}¢</span>}
-                  </button>
+              {/* Character + speech bubble container */}
+              <motion.div
+                key="kalshi-warning"
+                className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+                <div className="flex flex-col items-center pointer-events-auto">
+                  {/* Speech bubble */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    transition={{ duration: 0.5, delay: 0.2, ease: easeCubic }}
+                  >
+                    <SpeechBubble
+                      text="Whoa whoa whoa! Don't go betting out there like a maniac. Stay here and bet smart with me!"
+                      large
+                    />
+                  </motion.div>
+
+                  {/* Character */}
+                  <motion.div
+                    initial={{ opacity: 0, y: 40 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 20 }}
+                    transition={{ duration: 0.5, ease: easeCubic }}
+                  >
+                    <CharacterPreview
+                      animation="point"
+                      size={{ width: 500, height: 600 }}
+                      rotationY={0.3}
+                    />
+                  </motion.div>
+
+                  {/* Warning text + buttons */}
+                  <motion.div
+                    className="flex flex-col items-center gap-4 -mt-8"
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.4, delay: 0.35, ease: easeCubic }}
+                  >
+                    <p className="text-white/60 text-sm text-center max-w-[400px]" style={{ fontFamily: 'var(--font-playfair), serif' }}>
+                      If you still want to bet externally, go ahead... but be careful out there!
+                    </p>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={dismissKalshiWarning}
+                        className="px-6 py-2.5 rounded-xl text-sm font-medium transition-colors"
+                        style={{
+                          background: 'rgba(16, 185, 129, 0.25)',
+                          border: '1px solid rgba(16, 185, 129, 0.4)',
+                          color: '#6ee7b7',
+                        }}
+                      >
+                        Go Back to Feed
+                      </button>
+                      <button
+                        onClick={proceedToKalshi}
+                        className="px-6 py-2.5 rounded-xl text-sm font-medium transition-colors"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.08)',
+                          border: '1px solid rgba(255, 255, 255, 0.15)',
+                          color: 'rgba(255, 255, 255, 0.5)',
+                        }}
+                      >
+                        Proceed to Kalshi
+                      </button>
+                    </div>
+                  </motion.div>
                 </div>
-              </div>
-            </motion.div>
+              </motion.div>
+            </>
           )}
         </AnimatePresence>
       </div>
 
-      {/* Spacebar hint — Framer Motion infinite pulse */}
-      <motion.div
-        className="absolute bottom-3 left-0 right-0 flex justify-center z-30"
-        animate={{ opacity: [0.5, 1, 0.5] }}
-        transition={{ duration: 2, ease: 'easeInOut', repeat: Infinity }}
-      >
-        <span className="text-white/50 text-sm">
-          Press space to continue
-        </span>
-      </motion.div>
+      {/* Spacebar hint — only tutorial stages */}
+      {!isFeed && (
+        <div
+          className="absolute bottom-3 left-0 right-0 flex justify-center z-30"
+        >
+          <motion.span
+            className="text-white/50 text-sm"
+            style={{ fontFamily: 'var(--font-playfair), serif' }}
+            animate={{ opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 2, ease: 'easeInOut', repeat: Infinity }}
+          >
+            Press space to continue
+          </motion.span>
+        </div>
+      )}
     </BgWrapper>
   )
 }
-

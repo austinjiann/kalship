@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useMemo } from 'react'
+import { useRef, useMemo, useEffect } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
@@ -46,11 +46,16 @@ export default function BlockyCharacter({
     right: null,
   })
 
-  useMemo(() => {
+  useEffect(() => {
+    const nextRefs: { left: THREE.Object3D | null; right: THREE.Object3D | null } = {
+      left: null,
+      right: null,
+    }
     clonedScene.traverse((child) => {
-      if (child.name === 'arm-left') armRefs.current.left = child
-      if (child.name === 'arm-right') armRefs.current.right = child
+      if (child.name === 'arm-left') nextRefs.left = child
+      if (child.name === 'arm-right') nextRefs.right = child
     })
+    armRefs.current = nextRefs
   }, [clonedScene])
 
   useFrame(({ clock }) => {

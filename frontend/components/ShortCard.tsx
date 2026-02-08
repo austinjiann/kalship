@@ -7,6 +7,18 @@ const YT_BASE_ORIGIN = 'https://www.youtube.com'
 const ALLOWED_ORIGINS = new Set<string>([YT_BASE_ORIGIN, 'https://www.youtube-nocookie.com'])
 
 let globalMuted = true
+const muteListeners = new Set<(value: boolean) => void>()
+
+const emitMuteChange = () => {
+  for (const listener of muteListeners) {
+    listener(globalMuted)
+  }
+}
+
+const subscribeToMute = (listener: (value: boolean) => void) => {
+  muteListeners.add(listener)
+  return () => muteListeners.delete(listener)
+}
 
 interface ShortCardProps {
   item: FeedItem
@@ -57,7 +69,7 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
 
   const toggleMute = useCallback(() => {
     globalMuted = !globalMuted
-    setIsMuted(globalMuted)
+    emitMuteChange()
     postPlayerMessage(globalMuted ? 'mute' : 'unMute')
   }, [postPlayerMessage])
 
@@ -66,10 +78,16 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
     if (!shouldRender) return
     syncPlayback(isActive)
     if (isActive) {
-      setIsMuted(globalMuted)
       syncMute()
     }
   }, [isActive, shouldRender, syncPlayback, syncMute])
+
+  useEffect(() => {
+    const handleMuteChange = (value: boolean) => {
+      setIsMuted((prev) => (prev === value ? prev : value))
+    }
+    return subscribeToMute(handleMuteChange)
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined') return

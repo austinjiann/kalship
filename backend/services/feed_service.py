@@ -153,7 +153,10 @@ class FeedService:
             parsed = datetime.fromisoformat(raw)
             if parsed.tzinfo is None:
                 parsed = parsed.replace(tzinfo=timezone.utc)
-            return int(parsed.timestamp())
+            ts_seconds = int(parsed.timestamp())
+            if ts_seconds <= 0:
+                return None
+            return ts_seconds
         except ValueError:
             return None
 
@@ -327,7 +330,9 @@ class FeedService:
         try:
             now = int(time.time())
             resolved_end_ts = end_ts if end_ts is not None else now
+            resolved_end_ts = max(1, int(resolved_end_ts))
             resolved_start_ts = start_ts if start_ts is not None else (resolved_end_ts - (hours * 3600))
+            resolved_start_ts = max(0, int(resolved_start_ts))
 
             if resolved_start_ts >= resolved_end_ts:
                 return []

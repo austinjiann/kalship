@@ -39,7 +39,10 @@ class Shorts(APIController):
             return json({"error": "ticker and series_ticker required"}, status=400)
         if period not in (1, 60, 1440):
             return json({"error": "period must be 1, 60, or 1440"}, status=400)
-        if start_ts and end_ts and start_ts >= end_ts:
+        sanitized_start_ts = start_ts if isinstance(start_ts, int) and start_ts > 0 else None
+        sanitized_end_ts = end_ts if isinstance(end_ts, int) and end_ts > 0 else None
+
+        if sanitized_start_ts and sanitized_end_ts and sanitized_start_ts >= sanitized_end_ts:
             return json({"error": "start_ts must be less than end_ts"}, status=400)
         try:
             candlesticks = await self.feed_service.get_candlesticks(
@@ -47,8 +50,8 @@ class Shorts(APIController):
                 ticker,
                 period_interval=period,
                 hours=hours,
-                start_ts=start_ts or None,
-                end_ts=end_ts or None,
+                start_ts=sanitized_start_ts,
+                end_ts=sanitized_end_ts,
             )
             return json({"candlesticks": candlesticks})
         except Exception as e:

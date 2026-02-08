@@ -5,6 +5,7 @@ import { QueueItem, FeedItem } from '@/types'
 import { VIDEO_IDS } from '@/mystery'
 
 const STORAGE_KEY = 'video_queue'
+const SESSION_RESULTS_KEY = 'feed_results'
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const BATCH_SIZE = 10
 
@@ -68,6 +69,32 @@ function saveToStorage(queue: QueueItem[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(toStoredQueue(queue)))
 }
 
+function saveFeedResults(items: FeedItem[]) {
+  if (typeof window === 'undefined') return
+  try {
+    sessionStorage.setItem(SESSION_RESULTS_KEY, JSON.stringify(items))
+  } catch { /* quota exceeded — non-critical */ }
+}
+
+function loadFeedResults(): Map<string, FeedItem> | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = sessionStorage.getItem(SESSION_RESULTS_KEY)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed) || parsed.length === 0) return null
+    const map = new Map<string, FeedItem>()
+    for (const item of parsed) {
+      if (item && typeof item === 'object' && item.youtube?.video_id) {
+        map.set(item.youtube.video_id, item as FeedItem)
+      }
+    }
+    return map.size > 0 ? map : null
+  } catch {
+    return null
+  }
+}
+
 export function useVideoQueue() {
   const [queue, setQueue] = useState<QueueItem[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
@@ -76,10 +103,23 @@ export function useVideoQueue() {
   useEffect(() => {
     if (initializedRef.current) return
     initializedRef.current = true
-    
+
     const stored = loadFromStorage()
+    const cachedResults = loadFeedResults()
+
     if (stored.length > 0) {
-      setQueue(stored)
+      if (cachedResults) {
+        // Hydrate stored queue items with cached FeedItem results
+        setQueue(stored.map(item => {
+          const cached = cachedResults.get(item.video_id)
+          if (cached && item.status !== 'failed') {
+            return { ...item, status: 'matched' as const, result: cached }
+          }
+          return item
+        }))
+      } else {
+        setQueue(stored)
+      }
     } else {
       const initial: QueueItem[] = VIDEO_IDS.map(id => ({
         video_id: id,
@@ -139,19 +179,29 @@ export function useVideoQueue() {
       const results: FeedItem[] = await res.json()
       const resultsMap = new Map(results.map(r => [r.youtube.video_id, r]))
 
-      setQueue(prev => prev.map(item => {
-        if (pendingIds.includes(item.video_id)) {
-          const result = resultsMap.get(item.video_id)
-          if (result) {
-            return { ...item, status: 'matched', result }
+      setQueue(prev => {
+        const next = prev.map(item => {
+          if (pendingIds.includes(item.video_id)) {
+            const result = resultsMap.get(item.video_id)
+            if (result) {
+              return { ...item, status: 'matched' as const, result }
+            }
+            if (item.status === 'matched' && item.result) {
+              return item
+            }
+            return { ...item, status: 'failed' as const, error: 'No match found', result: undefined }
           }
-          if (item.status === 'matched' && item.result) {
-            return item
-          }
-          return { ...item, status: 'failed', error: 'No match found', result: undefined }
-        }
-        return item
-      }))
+          return item
+        })
+
+        // Persist all matched results to sessionStorage
+        const allMatched = next
+          .filter(q => q.status === 'matched' && q.result)
+          .map(q => q.result!)
+        saveFeedResults(allMatched)
+
+        return next
+      })
     } catch (err) {
       setQueue(prev => prev.map(item => {
         if (item.status === 'processing') {
