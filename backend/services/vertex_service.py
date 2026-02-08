@@ -66,7 +66,10 @@ class VertexService:
             "negative_prompt": (
                 "text, captions, subtitles, annotations, logos, low quality, static shot, slideshow, "
                 "ugly, bad anatomy, extra limbs, deformed faces, identity drift, face morphing, "
-                "weird physics, backwards motion, reverse playback"
+                "weird physics, backwards motion, reverse playback, teleporting, time jump glitches, "
+                "body interpenetration, merged players, clipping through objects, impossible collisions, "
+                "random extra characters, sudden outfit changes, disappearing equipment, "
+                "helmetless football players, broken sports gear continuity"
             ),
             "resolution": "4k",
         }
