@@ -200,7 +200,7 @@ export function useVideoQueue() {
     market: KalshiMarket,
     betSide: 'YES' | 'NO'
   ) => {
-    const entry = findVisualizationBySeriesTicker(market.series_ticker)
+    const entry = findVisualizationBySeriesTicker(market.series_ticker, market.question)
     if (!entry || entry.source.type !== 'mp4') return
 
     const injectedItem: FeedItem = {

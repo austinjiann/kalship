@@ -90,13 +90,21 @@ const SERIES_TO_TOPIC: Record<string, VideoTopic> = {
   'KXWCGAME': VideoTopic.SUPERBOWL,
 }
 
-export function findVisualizationBySeriesTicker(seriesTicker?: string): VideoEntry | null {
+export function findVisualizationBySeriesTicker(seriesTicker?: string, question?: string): VideoEntry | null {
   const topic = seriesTicker ? SERIES_TO_TOPIC[seriesTicker] : undefined
-  const pool = topic
-    ? VISUALIZATION_VIDEOS.filter(v => v.topic === topic)
-    : VISUALIZATION_VIDEOS
-  if (pool.length === 0) return null
-  return pool[Math.floor(Math.random() * pool.length)]
+  if (topic) {
+    const pool = VISUALIZATION_VIDEOS.filter(v => v.topic === topic)
+    if (pool.length > 0) return pool[Math.floor(Math.random() * pool.length)]
+  }
+  // Fallback: keyword match from market question
+  if (question) {
+    const keywords = question.split(/\s+/)
+    const match = findVisualizationVideo(keywords)
+    if (match) return match
+  }
+  // Last resort: random from entire pool
+  if (VISUALIZATION_VIDEOS.length === 0) return null
+  return VISUALIZATION_VIDEOS[Math.floor(Math.random() * VISUALIZATION_VIDEOS.length)]
 }
 
 export function findVisualizationVideo(keywords: string[]): VideoEntry | null {
