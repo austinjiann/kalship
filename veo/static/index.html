@@ -77,12 +77,30 @@
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #333; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .hint { color: #555; font-size: 11px; margin-top: 4px; }
-  .director-settings {
+  .director-settings, .keyframe-settings {
     display: none; margin: 8px 0 0 24px; padding: 10px; background: #151515;
     border: 1px solid #2563eb33; border-radius: 4px;
   }
-  .director-settings.visible { display: flex; gap: 12px; align-items: end; }
-  .director-settings > div { min-width: 100px; }
+  .director-settings.visible, .keyframe-settings.visible { display: flex; gap: 12px; align-items: end; }
+  .director-settings > div, .keyframe-settings > div { min-width: 100px; }
+  .keyframe-settings { border-color: #16a34a33; }
+  .keyframe-preview {
+    display: flex; gap: 8px; align-items: center; margin: 12px 0;
+    overflow-x: auto; padding: 8px 0;
+  }
+  .keyframe-preview .kf-card {
+    flex: 0 0 140px; background: #151515; border: 1px solid #333; border-radius: 6px;
+    padding: 8px; text-align: center;
+  }
+  .keyframe-preview .kf-card img {
+    width: 100%; border-radius: 4px; background: #000;
+  }
+  .keyframe-preview .kf-arrow {
+    flex: 0 0 32px; color: #16a34a; font-size: 24px; text-align: center;
+  }
+  .keyframe-preview .kf-label {
+    font-size: 11px; color: #888; margin-top: 4px;
+  }
   .storyboard {
     display: flex; gap: 0; align-items: stretch; overflow-x: auto; padding: 12px 0;
   }
@@ -169,6 +187,7 @@
       <label><input type="checkbox" id="veoEnhance" checked> Veo enhance</label>
       <label><input type="checkbox" id="audio"> Generate audio</label>
       <label><input type="checkbox" id="directorMode" onchange="toggleDirectorSettings()"> Director Mode (multi-clip)</label>
+      <label><input type="checkbox" id="keyframeMode" onchange="toggleKeyframeSettings()"> Keyframe Mode (seamless transitions)</label>
     </div>
     <div class="director-settings" id="directorSettings">
       <div>
@@ -185,6 +204,19 @@
           <option value="5">5 seconds</option>
           <option value="8" selected>8 seconds</option>
         </select>
+      </div>
+    </div>
+    <div class="keyframe-settings" id="keyframeSettings">
+      <div>
+        <label>Keyframes</label>
+        <select id="numFrames">
+          <option value="3" selected>3 frames (2 videos)</option>
+          <option value="4">4 frames (3 videos)</option>
+          <option value="5">5 frames (4 videos)</option>
+        </select>
+      </div>
+      <div style="flex:1;font-size:11px;color:#16a34a">
+        Gemini plans keyframes → Imagen generates each frame → Veo creates videos between consecutive frames for seamless transitions
       </div>
     </div>
 
@@ -253,6 +285,22 @@ function renderPreviews() {
 function toggleDirectorSettings() {
   const on = document.getElementById('directorMode').checked;
   document.getElementById('directorSettings').classList.toggle('visible', on);
+  // Disable keyframe mode if director mode is on
+  if (on) {
+    document.getElementById('keyframeMode').checked = false;
+    document.getElementById('keyframeSettings').classList.remove('visible');
+  }
+}
+
+// --- Keyframe Mode Toggle ---
+function toggleKeyframeSettings() {
+  const on = document.getElementById('keyframeMode').checked;
+  document.getElementById('keyframeSettings').classList.toggle('visible', on);
+  // Disable director mode if keyframe mode is on
+  if (on) {
+    document.getElementById('directorMode').checked = false;
+    document.getElementById('directorSettings').classList.remove('visible');
+  }
 }
 
 // --- Generate ---
@@ -261,9 +309,17 @@ async function generate() {
   if (!prompt) return alert('Enter a prompt');
 
   const isDirector = document.getElementById('directorMode').checked;
+  const isKeyframe = document.getElementById('keyframeMode').checked;
   const btn = document.getElementById('genBtn');
   btn.disabled = true;
-  btn.textContent = isDirector ? 'DECOMPOSING SHOTS...' : 'SUBMITTING...';
+
+  if (isKeyframe) {
+    btn.textContent = 'PLANNING KEYFRAMES...';
+  } else if (isDirector) {
+    btn.textContent = 'DECOMPOSING SHOTS...';
+  } else {
+    btn.textContent = 'SUBMITTING...';
+  }
 
   const fd = new FormData();
   fd.append('prompt', prompt);
@@ -277,7 +333,25 @@ async function generate() {
 
   for (const f of refFiles) fd.append('images', f);
 
-  if (isDirector) {
+  if (isKeyframe) {
+    fd.append('num_frames', document.getElementById('numFrames').value);
+
+    try {
+      const res = await fetch('/api/keyframe', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+
+      btn.textContent = 'GENERATE';
+      btn.disabled = false;
+
+      addKeyframeResult(data.sequence_id, data.frames, data.videos);
+      startKeyframePolling(data.sequence_id);
+    } catch (e) {
+      btn.textContent = 'GENERATE';
+      btn.disabled = false;
+      alert('Error: ' + e.message);
+    }
+  } else if (isDirector) {
     fd.append('num_shots', document.getElementById('numShots').value);
     fd.append('duration_per_shot', document.getElementById('durationPerShot').value);
 
@@ -489,6 +563,149 @@ async function stitchSequence(seqId) {
       </div>
     `;
     seqBox.appendChild(stitchedDiv);
+  } catch (e) {
+    btn.textContent = 'STITCH FAILED';
+    btn.style.background = '#ef4444';
+    alert('Stitch error: ' + e.message);
+    setTimeout(() => { btn.textContent = 'STITCH ALL'; btn.style.background = ''; btn.disabled = false; }, 3000);
+  }
+}
+
+// --- Keyframe Mode: Results ---
+function addKeyframeResult(seqId, frames, videos) {
+  const results = document.getElementById('results');
+  const box = document.createElement('div');
+  box.className = 'result-box';
+  box.id = 'kf-' + seqId;
+
+  let header = `
+    <div style="display:flex;align-items:center;gap:12px">
+      <div class="status processing" id="kf-status-${seqId}" style="flex:1"><span class="spinner"></span> Keyframe Mode — ${frames.length} frames → ${videos.length} videos (${seqId})</div>
+      <button id="kf-stitch-btn-${seqId}" class="stitch-btn" onclick="stitchKeyframeSequence('${seqId}')" disabled style="display:none">STITCH ALL</button>
+    </div>`;
+
+  // Keyframe preview strip
+  let keyframePreview = '<div class="keyframe-preview">';
+  frames.forEach((frame, i) => {
+    if (i > 0) keyframePreview += '<div class="kf-arrow">→</div>';
+    keyframePreview += `
+      <div class="kf-card">
+        <img id="kf-img-${seqId}-${frame.frame_number}"
+             src="${frame.keyframe_url || ''}"
+             alt="Frame ${frame.frame_number}"
+             onerror="this.style.display='none'">
+        <div class="kf-label">${esc(frame.moment || 'Frame ' + frame.frame_number)}</div>
+      </div>
+    `;
+  });
+  keyframePreview += '</div>';
+
+  // Videos between keyframes
+  let videosHtml = '<div style="margin-top:16px">';
+  videosHtml += '<div style="color:#16a34a;font-size:12px;font-weight:600;margin-bottom:8px">Generated Videos</div>';
+  videosHtml += '<div class="storyboard">';
+
+  videos.forEach((video, i) => {
+    if (i > 0) videosHtml += '<div class="shot-arrow">→</div>';
+    videosHtml += `
+      <div class="shot-card" id="kf-video-card-${seqId}-${video.video_number}">
+        <div class="shot-label">Video ${video.video_number}: Frame ${video.from_frame} → ${video.to_frame}</div>
+        <div class="status processing" id="kf-video-status-${seqId}-${video.video_number}"><span class="spinner"></span> Processing...</div>
+        <div id="kf-video-player-${seqId}-${video.video_number}"></div>
+      </div>
+    `;
+  });
+
+  videosHtml += '</div></div>';
+
+  box.innerHTML = header + keyframePreview + videosHtml;
+  results.prepend(box);
+  updateJobsList();
+}
+
+const kfPollers = {};
+
+function startKeyframePolling(seqId) {
+  if (kfPollers[seqId]) return;
+  kfPollers[seqId] = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/keyframe-sequence/${seqId}`);
+      const data = await res.json();
+
+      // Update video statuses
+      data.videos.forEach(video => {
+        const statusEl = document.getElementById(`kf-video-status-${seqId}-${video.video_number}`);
+        const playerEl = document.getElementById(`kf-video-player-${seqId}-${video.video_number}`);
+        if (!statusEl) return;
+
+        if (video.status === 'done' && video.video_url) {
+          statusEl.className = 'status done';
+          statusEl.textContent = `Done (${video.from_moment} → ${video.to_moment})`;
+          if (!playerEl.querySelector('video')) {
+            playerEl.innerHTML = `
+              <video controls autoplay loop src="${video.video_url}" style="width:100%;max-height:300px;border-radius:4px;background:#000"></video>
+              <div style="margin-top:4px">
+                <a href="${video.video_url}" download="kf-video-${video.video_number}.mp4" style="color:#2563eb;font-size:11px">Download</a>
+              </div>
+            `;
+          }
+        } else if (video.status === 'error') {
+          statusEl.className = 'status error';
+          statusEl.textContent = 'Error: ' + (video.error || 'unknown');
+        }
+      });
+
+      const kfStatus = document.getElementById(`kf-status-${seqId}`);
+      if (data.status === 'done') {
+        clearInterval(kfPollers[seqId]);
+        delete kfPollers[seqId];
+        kfStatus.className = 'status done';
+        kfStatus.textContent = `Keyframe Mode — All ${data.videos.length} videos complete (${seqId})`;
+        const stitchBtn = document.getElementById('kf-stitch-btn-' + seqId);
+        if (stitchBtn) { stitchBtn.style.display = ''; stitchBtn.disabled = false; }
+        updateJobsList();
+      } else if (data.status === 'error') {
+        clearInterval(kfPollers[seqId]);
+        delete kfPollers[seqId];
+        const doneCount = data.videos.filter(v => v.status === 'done').length;
+        kfStatus.className = 'status error';
+        kfStatus.textContent = `Keyframe Mode — ${doneCount}/${data.videos.length} videos complete, some errors (${seqId})`;
+        if (doneCount >= 1) {
+          const stitchBtn = document.getElementById('kf-stitch-btn-' + seqId);
+          if (stitchBtn) { stitchBtn.style.display = ''; stitchBtn.disabled = false; stitchBtn.textContent = `STITCH ${doneCount} VIDEOS`; }
+        }
+        updateJobsList();
+      }
+    } catch (e) {
+      console.error('Keyframe poll error:', e);
+    }
+  }, 5000);
+}
+
+async function stitchKeyframeSequence(seqId) {
+  const btn = document.getElementById('kf-stitch-btn-' + seqId);
+  btn.disabled = true;
+  btn.textContent = 'STITCHING...';
+
+  try {
+    const res = await fetch(`/api/keyframe-stitch/${seqId}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+
+    btn.textContent = 'STITCHED';
+    btn.style.background = '#22c55e';
+
+    const kfBox = document.getElementById('kf-' + seqId);
+    const stitchedDiv = document.createElement('div');
+    stitchedDiv.style.cssText = 'margin-top:16px;padding:16px;background:#0d0d0d;border:1px solid #16a34a44;border-radius:6px';
+    stitchedDiv.innerHTML = `
+      <div style="color:#16a34a;font-size:13px;font-weight:600;margin-bottom:8px">Seamless Stitched Video (${data.videos_included} segments)</div>
+      <video controls autoplay src="${data.video_url}" style="width:100%;max-height:500px;border-radius:4px;background:#000"></video>
+      <div style="margin-top:8px">
+        <a href="${data.video_url}" download="keyframe-${seqId}-seamless.mp4" style="color:#2563eb;font-size:12px">Download seamless video</a>
+      </div>
+    `;
+    kfBox.appendChild(stitchedDiv);
   } catch (e) {
     btn.textContent = 'STITCH FAILED';
     btn.style.background = '#ef4444';

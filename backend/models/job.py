@@ -10,16 +10,6 @@ class VideoJobRequest:
     original_bet_link: str
     source_image_url: Optional[str] = None  # Optional real image to use as base
 
-
-@dataclass
-class WorkerJobPayload:
-    """Payload sent to worker for processing"""
-    job_id: str
-    title: str
-    outcome: str
-    original_bet_link: str
-
-
 @dataclass
 class JobStatus:
     status: Optional[Literal["done", "waiting", "error"]]

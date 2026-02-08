@@ -1,11 +1,19 @@
-# Worker endpoint for Cloud Tasks
+# google cloud run --> will be used when hosted
 from blacksheep import json, Response
-from blacksheep.server.controllers import APIController, post
+from blacksheep.server.controllers import APIController, post, get
 from services.job_service import JobService
 
 class Worker(APIController):
     def __init__(self, job_service: JobService):
         self.job_service = job_service
+        
+    @get("/health")
+    async def health_check(self):
+        return json({"status": "ok"})
+    
+    @post("/greet")
+    async def greet_user(self, name: str):
+        return {"message": f"Hello, {name}!"}
 
     @post("/process")
     async def process_job(self, data: dict) -> Response:

@@ -124,7 +124,6 @@ class JobService:
         return gs_uri
 
     def _generate_signed_url(self, gs_uri: str) -> Optional[str]:
-        """Generate a URL for a GCS object. Uses public URL (bucket must be public)."""
         if not gs_uri or not gs_uri.startswith("gs://"):
             return None
 
@@ -232,7 +231,7 @@ class JobService:
         return job_id
 
     async def process_video_job(self, job_id: str, job_data: dict):
-        """Process pipeline: Gemini starting frame -> Veo video"""
+        #  Gemini starting frame -> Veo video
         jid = job_id[:8]
         start_time = datetime.now().isoformat()
         existing_job = await self._load_job(job_id)
@@ -245,7 +244,7 @@ class JobService:
             original_bet_link = job_data["original_bet_link"]
             source_image_url = job_data.get("source_image_url")
 
-            # Step 1: Get or generate the starting frame
+            # starting frame
             source_image = None
             if source_image_url:
                 source_image = await fetch_image_from_url(source_image_url)
@@ -267,12 +266,12 @@ class JobService:
                 else:
                     raise ValueError("Failed to generate starting frame via Gemini and no source image provided")
 
-            # Step 2: Upload preview image to GCS
+            # starting frame -> GCS
             image_uri = ""
             if self.bucket and source_image:
                 image_uri = await asyncio.to_thread(self._upload_image_sync, job_id, 1, source_image)
 
-            # Step 3: Build Veo prompt and generate video
+            # generate video with prompt and inputs
             veo_prompt = create_video_prompt(
                 title=title,
                 outcome=outcome,
@@ -306,7 +305,6 @@ class JobService:
             })
 
     async def get_job_status(self, job_id: str) -> Optional[JobStatus]:
-        """Poll job status."""
         job = await self._load_job(job_id)
         if job is None:
             return None
@@ -358,8 +356,3 @@ class JobService:
             return JobStatus(status="waiting", job_start_time=job_start_time, original_bet_link=original_bet_link, image_url=image_url)
 
         return JobStatus(status="waiting", job_start_time=job_start_time, original_bet_link=original_bet_link, image_url=image_url)
-
-    async def update_job(self, job_id: str, data: dict):
-        existing = await self._load_job(job_id) or {}
-        existing.update(data)
-        await self._save_job(job_id, existing)

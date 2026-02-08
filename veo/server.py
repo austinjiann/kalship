@@ -237,6 +237,118 @@ Output ONLY the rewritten description. No commentary."""
     return sanitized
 
 
+async def plan_keyframes(scene: str, descriptions: list[str], num_frames: int = 3) -> list[dict]:
+    """Use Gemini to plan keyframe descriptions for seamless video transitions."""
+    desc_section = ""
+    if descriptions:
+        desc_section = "\n\nREFERENCE SUBJECT DESCRIPTIONS (use these for visual consistency):\n" + "\n".join(
+            f"- Subject {i+1}: {d}" for i, d in enumerate(descriptions)
+        )
+
+    resp = client.models.generate_content(
+        model="gemini-2.0-flash-001",
+        contents=[
+            f"""You are a cinematographer planning keyframes for a video sequence.
+The final video will be created by generating {num_frames - 1} video segments, each 8 seconds long.
+Each segment uses a START frame and the video transitions naturally toward the NEXT keyframe.
+
+SCENE: {scene}
+{desc_section}
+
+CRITICAL — NAME SANITIZATION:
+- Replace ALL real person names with role-based labels ("the quarterback", "the wide receiver", "Subject 1", etc.)
+- Team names and city names are fine — NO real people's names.
+
+CRITICAL — PERSON DESCRIPTION RULES:
+- NEVER use specific skin tones — use "the quarterback" or "Subject 1" instead
+- NEVER describe specific facial features
+- DO reference uniform details: jersey color, number, helmet style, team colors
+- DO reference general build: "tall athletic build", "compact powerful frame"
+
+Plan exactly {num_frames} keyframes that tell a complete visual story:
+- Keyframe 1: The OPENING moment — establish the scene, subjects in starting positions
+- Keyframe 2: The MIDDLE/PEAK moment — maximum action, dramatic tension
+- Keyframe 3: The ENDING moment — resolution, conclusion, celebration or result
+
+For each keyframe, provide:
+- "frame_number": 1, 2, or 3
+- "moment": short label like "The Setup", "Peak Action", "Victory Celebration"
+- "description": detailed visual description (100-150 words) for Imagen to generate this exact frame
+  - Include: composition, subject positions/poses, camera angle, lighting, atmosphere
+  - This must be a SINGLE FROZEN MOMENT, not an action description
+  - Describe what the camera SEES in this exact instant
+- "video_prompt": prompt for Veo to create the video FROM this frame TO the next frame (150-200 words)
+  - For frame 1: describe action leading to frame 2
+  - For frame 2: describe action leading to frame 3
+  - For frame 3: set to "final" (no video generated from this frame)
+  - Include camera movement, action beats, pacing
+
+CRITICAL for seamless transitions:
+- Frame 2's description should match what video 1 is heading toward
+- Frame 2's video_prompt starts from where video 1 ends
+
+Output ONLY a JSON array. No markdown, no commentary, no code fences.
+
+Example:
+[{{"frame_number": 1, "moment": "The Setup", "description": "Wide stadium shot, quarterback in shotgun formation...", "video_prompt": "Camera tracks as the quarterback drops back..."}}]"""
+        ],
+    )
+
+    text = resp.text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+    if text.endswith("```"):
+        text = text[: text.rfind("```")]
+    text = text.strip()
+
+    try:
+        frames = json.loads(text)
+    except json.JSONDecodeError:
+        log.error(f"Failed to parse keyframe plan: {text[:200]}")
+        raise ValueError("Gemini returned invalid JSON for keyframe planning")
+
+    return frames
+
+
+async def generate_keyframe_image(frame_desc: str, aspect_ratio: str, max_retries: int = 3) -> bytes | None:
+    """Use Imagen to generate a single keyframe image with retry on rate limit."""
+    frame_prompt = f"""Photorealistic cinematic still frame, {aspect_ratio} composition.
+
+{frame_desc}
+
+Style: NFL broadcast freeze-frame quality, stadium floodlights, dramatic rim lighting, shallow DOF, 4K cinematic detail, lens flare.
+No text, no watermarks, no UI elements, no logos, no captions."""
+
+    log.info(f"Generating keyframe image...")
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_images(
+                model="imagen-3.0-generate-002",
+                prompt=frame_prompt[:5000],
+                config=gt.GenerateImagesConfig(
+                    number_of_images=1,
+                    aspect_ratio=aspect_ratio,
+                    output_mime_type="image/png",
+                    person_generation="ALLOW_ADULT",
+                ),
+            )
+            if response.generated_images:
+                img_bytes = response.generated_images[0].image.image_bytes
+                log.info(f"Keyframe generated ({len(img_bytes)} bytes)")
+                return img_bytes
+            log.warning("Imagen returned no images for keyframe")
+            return None
+        except Exception as e:
+            if "429" in str(e) and attempt < max_retries - 1:
+                delay = 2 ** (attempt + 1)  # 2, 4, 8 seconds
+                log.warning(f"Rate limited, retrying in {delay}s (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(delay)
+                continue
+            log.error(f"Keyframe generation failed: {e}")
+            return None
+    return None
+
+
 async def decompose_into_shots(scene: str, descriptions: list[str], num_shots: int = 4) -> list[dict]:
     """Use Gemini to break a complex scene into individual shot prompts for Veo."""
     desc_section = ""
@@ -692,6 +804,449 @@ async def director(
         "sequence_id": seq_id,
         "shots": shot_jobs,
     }
+
+
+# Store keyframe sequences separately
+keyframe_sequences: dict = {}
+
+
+@app.post("/api/keyframe")
+async def keyframe_generate(
+    images: list[UploadFile] = File(default=[]),
+    prompt: str = Form(...),
+    aspect_ratio: str = Form("9:16"),
+    num_frames: int = Form(3),
+    model: str = Form("veo-3.1-generate-preview"),
+    person_generation: str = Form("allow_adult"),
+    veo_enhance: bool = Form(True),
+    gemini_enhance: bool = Form(True),
+    generate_audio: bool = Form(False),
+    negative_prompt: str = Form(""),
+):
+    """Generate videos using keyframe-based transitions.
+
+    Creates N-1 videos from N keyframes, where each video starts from one keyframe
+    and transitions toward the next, creating seamless continuity.
+    """
+    seq_id = str(uuid.uuid4())[:8]
+    log.info(f"[kf-{seq_id}] Keyframe mode: {num_frames} frames → {num_frames - 1} videos")
+
+    # Read uploaded reference images
+    img_list = []
+    for f in images:
+        data = await f.read()
+        if data:
+            img_list.append((data, f.filename or "image"))
+
+    # Describe reference images for subject consistency
+    descriptions = []
+    if gemini_enhance and img_list:
+        for img_bytes, fname in img_list:
+            try:
+                desc = await describe_image(img_bytes)
+                descriptions.append(desc)
+                log.info(f"[kf-{seq_id}] Described: {fname}")
+            except Exception as e:
+                log.error(f"[kf-{seq_id}] Describe failed for {fname}: {e}")
+
+    # Pre-sanitize the prompt
+    clean_prompt = _hardcoded_sanitize(prompt)
+    try:
+        clean_prompt = await sanitize_names(clean_prompt)
+        log.info(f"[kf-{seq_id}] Prompt sanitized")
+    except Exception as e:
+        log.error(f"[kf-{seq_id}] Sanitization failed: {e}")
+
+    # Sanitize descriptions
+    try:
+        descriptions = await sanitize_descriptions(descriptions)
+        log.info(f"[kf-{seq_id}] Descriptions sanitized")
+    except Exception as e:
+        log.error(f"[kf-{seq_id}] Description sanitization failed: {e}")
+
+    # Step 1: Plan keyframes using Gemini
+    try:
+        keyframes = await plan_keyframes(clean_prompt, descriptions, num_frames)
+        log.info(f"[kf-{seq_id}] Planned {len(keyframes)} keyframes")
+    except Exception as e:
+        log.error(f"[kf-{seq_id}] Keyframe planning failed: {e}")
+        raise HTTPException(500, f"Keyframe planning failed: {e}")
+
+    # Step 2: Generate keyframe images using Imagen
+    frame_images = []
+    for i, kf in enumerate(keyframes):
+        # Add delay between Imagen calls to avoid rate limiting
+        if i > 0:
+            await asyncio.sleep(2)
+        frame_desc = kf.get("description", "")
+        log.info(f"[kf-{seq_id}] Generating frame {i+1}: {kf.get('moment', '')}")
+
+        img_data = await generate_keyframe_image(frame_desc, aspect_ratio)
+        if img_data:
+            frame_images.append({
+                "frame_number": i + 1,
+                "moment": kf.get("moment", f"Frame {i+1}"),
+                "description": frame_desc,
+                "video_prompt": kf.get("video_prompt", ""),
+                "image_bytes": img_data,
+            })
+            log.info(f"[kf-{seq_id}] Frame {i+1} generated successfully")
+        else:
+            log.error(f"[kf-{seq_id}] Failed to generate frame {i+1}")
+            raise HTTPException(500, f"Failed to generate keyframe {i+1}")
+
+    # Step 3: Generate videos between consecutive keyframes
+    video_jobs = []
+    for i in range(len(frame_images) - 1):
+        start_frame = frame_images[i]
+        end_frame = frame_images[i + 1]
+
+        # Get the video prompt (describes transition from this frame to next)
+        video_prompt = start_frame.get("video_prompt", "")
+        if video_prompt == "final":
+            continue
+
+        # Sanitize the video prompt
+        video_prompt = _hardcoded_sanitize(video_prompt)
+        try:
+            video_prompt = await sanitize_names(video_prompt)
+        except Exception as e:
+            log.error(f"[kf-{seq_id}] Video prompt {i} sanitization failed: {e}")
+
+        job_id = str(uuid.uuid4())[:8]
+        log.info(f"[kf-{seq_id}] Video {i+1}: Frame {i+1} → Frame {i+2} ({job_id})")
+
+        # Build Veo config - using start frame as the image
+        config_kwargs: dict = {
+            "aspect_ratio": aspect_ratio,
+            "duration_seconds": 8,  # Fixed 8s per segment
+            "person_generation": person_generation.upper(),
+            "enhance_prompt": veo_enhance,
+            "generate_audio": generate_audio,
+            "resolution": "4k",
+        }
+
+        if negative_prompt.strip():
+            config_kwargs["negative_prompt"] = negative_prompt.strip()
+
+        if BUCKET:
+            config_kwargs["output_gcs_uri"] = f"gs://{BUCKET}/veo-sandbox/{job_id}/"
+
+        config = gt.GenerateVideosConfig(**config_kwargs)
+
+        # Use the start frame as the image input
+        veo_kwargs: dict = {
+            "model": model,
+            "prompt": video_prompt,
+            "config": config,
+            "image": gt.Image(
+                image_bytes=start_frame["image_bytes"],
+                mime_type="image/png"
+            ),
+        }
+
+        try:
+            operation = client.models.generate_videos(**veo_kwargs)
+            jobs[job_id] = {
+                "op": operation.name,
+                "status": "processing",
+                "prompt": video_prompt,
+                "model": model,
+            }
+            video_jobs.append({
+                "job_id": job_id,
+                "video_number": i + 1,
+                "from_frame": i + 1,
+                "to_frame": i + 2,
+                "from_moment": start_frame.get("moment", ""),
+                "to_moment": end_frame.get("moment", ""),
+                "prompt": video_prompt,
+                "operation_name": operation.name,
+                "status": "processing",
+            })
+            log.info(f"[kf-{seq_id}] Video {i+1} submitted: {operation.name}")
+        except Exception as e:
+            log.error(f"[kf-{seq_id}] Video {i+1} submit failed: {e}")
+            video_jobs.append({
+                "job_id": job_id,
+                "video_number": i + 1,
+                "from_frame": i + 1,
+                "to_frame": i + 2,
+                "from_moment": start_frame.get("moment", ""),
+                "to_moment": end_frame.get("moment", ""),
+                "prompt": video_prompt,
+                "error": str(e),
+                "status": "error",
+            })
+
+    # Store sequence data (without large image bytes for memory)
+    keyframe_sequences[seq_id] = {
+        "status": "processing",
+        "num_frames": len(frame_images),
+        "frames": [
+            {
+                "frame_number": f["frame_number"],
+                "moment": f["moment"],
+                "description": f["description"],
+            }
+            for f in frame_images
+        ],
+        "videos": video_jobs,
+        "model": model,
+    }
+
+    # Save keyframe images to GCS for later reference
+    if gcs and BUCKET:
+        for f in frame_images:
+            try:
+                bucket = gcs.bucket(BUCKET)
+                blob = bucket.blob(f"veo-sandbox/{seq_id}/keyframe_{f['frame_number']}.png")
+                blob.upload_from_string(f["image_bytes"], content_type="image/png")
+                log.info(f"[kf-{seq_id}] Saved keyframe {f['frame_number']} to GCS")
+            except Exception as e:
+                log.error(f"[kf-{seq_id}] Failed to save keyframe {f['frame_number']}: {e}")
+
+    return {
+        "sequence_id": seq_id,
+        "num_frames": len(frame_images),
+        "num_videos": len(video_jobs),
+        "frames": [
+            {
+                "frame_number": f["frame_number"],
+                "moment": f["moment"],
+                "keyframe_url": f"/api/keyframe-image/{seq_id}/{f['frame_number']}" if gcs and BUCKET else None,
+            }
+            for f in frame_images
+        ],
+        "videos": [
+            {
+                "video_number": v["video_number"],
+                "job_id": v["job_id"],
+                "from_frame": v["from_frame"],
+                "to_frame": v["to_frame"],
+                "status": v.get("status", "processing"),
+            }
+            for v in video_jobs
+        ],
+    }
+
+
+@app.get("/api/keyframe-image/{seq_id}/{frame_num}")
+async def get_keyframe_image(seq_id: str, frame_num: int):
+    """Retrieve a generated keyframe image."""
+    if not gcs or not BUCKET:
+        raise HTTPException(404, "GCS not configured")
+
+    try:
+        bucket = gcs.bucket(BUCKET)
+        blob = bucket.blob(f"veo-sandbox/{seq_id}/keyframe_{frame_num}.png")
+        data = blob.download_as_bytes()
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type="image/png",
+            headers={"Content-Disposition": f'inline; filename="keyframe-{seq_id}-{frame_num}.png"'},
+        )
+    except Exception as e:
+        raise HTTPException(404, f"Keyframe not found: {e}")
+
+
+@app.get("/api/keyframe-sequence/{seq_id}")
+async def get_keyframe_sequence(seq_id: str):
+    """Poll status of a keyframe-based video sequence."""
+    seq = keyframe_sequences.get(seq_id)
+    if not seq:
+        raise HTTPException(404, "Keyframe sequence not found")
+
+    all_done = True
+    any_error = False
+
+    for video in seq["videos"]:
+        # Skip already finished videos
+        if video.get("status") in ("done", "error"):
+            if video.get("status") == "error":
+                any_error = True
+            continue
+
+        job_id = video["job_id"]
+        job = jobs.get(job_id)
+        if not job:
+            video["status"] = "error"
+            video["error"] = "Job not found"
+            any_error = True
+            continue
+
+        try:
+            op = gt.GenerateVideosOperation(name=job["op"])
+            op = client.operations.get(op)
+
+            if op.done:
+                if hasattr(op, "error") and op.error:
+                    job["status"] = "error"
+                    video["status"] = "error"
+                    video["error"] = str(op.error)
+                    any_error = True
+                elif op.result and op.result.generated_videos:
+                    vid = op.result.generated_videos[0].video
+                    if vid.uri:
+                        job["status"] = "done"
+                        job["video_uri"] = vid.uri
+                        video["status"] = "done"
+                        video["video_url"] = f"/api/video/{job_id}"
+                    elif hasattr(vid, "video_bytes") and vid.video_bytes:
+                        job["status"] = "done"
+                        job["video_bytes"] = vid.video_bytes
+                        video["status"] = "done"
+                        video["video_url"] = f"/api/video/{job_id}"
+                    else:
+                        job["status"] = "error"
+                        video["status"] = "error"
+                        video["error"] = "No video in result"
+                        any_error = True
+                else:
+                    job["status"] = "error"
+                    video["status"] = "error"
+                    video["error"] = "No video in result"
+                    any_error = True
+            else:
+                all_done = False
+        except Exception as e:
+            video["status"] = "error"
+            video["error"] = str(e)
+            any_error = True
+
+    if all_done:
+        seq["status"] = "error" if any_error else "done"
+    else:
+        seq["status"] = "processing"
+
+    return {
+        "sequence_id": seq_id,
+        "status": seq["status"],
+        "num_frames": seq["num_frames"],
+        "frames": seq["frames"],
+        "videos": [
+            {
+                "video_number": v["video_number"],
+                "job_id": v["job_id"],
+                "from_frame": v["from_frame"],
+                "to_frame": v["to_frame"],
+                "from_moment": v.get("from_moment", ""),
+                "to_moment": v.get("to_moment", ""),
+                "status": v.get("status", "processing"),
+                "video_url": v.get("video_url"),
+                "error": v.get("error"),
+            }
+            for v in seq["videos"]
+        ],
+    }
+
+
+@app.post("/api/keyframe-stitch/{seq_id}")
+async def stitch_keyframe_sequence(seq_id: str):
+    """Concatenate all videos in a keyframe sequence into one seamless video."""
+    seq = keyframe_sequences.get(seq_id)
+    if not seq:
+        raise HTTPException(404, "Keyframe sequence not found")
+
+    # Collect video data for all completed videos, in order
+    video_parts = []
+    for video in seq["videos"]:
+        job_id = video.get("job_id")
+        job = jobs.get(job_id)
+        if not job or job.get("status") != "done":
+            continue
+
+        if "video_uri" in job:
+            uri = job["video_uri"]
+            path = uri.replace("gs://", "")
+            bucket_name = path.split("/")[0]
+            blob_path = "/".join(path.split("/")[1:])
+            try:
+                bucket = gcs.bucket(bucket_name)
+                blob = bucket.blob(blob_path)
+                data = blob.download_as_bytes()
+                video_parts.append((video["video_number"], data))
+            except Exception as e:
+                log.error(f"[kf-stitch-{seq_id}] Failed to download video {video['video_number']}: {e}")
+        elif "video_bytes" in job:
+            video_parts.append((video["video_number"], job["video_bytes"]))
+
+    if len(video_parts) < 1:
+        raise HTTPException(400, f"Need at least 1 completed video to stitch, got {len(video_parts)}")
+
+    # If only one video, just return it directly
+    if len(video_parts) == 1:
+        stitch_id = f"kf-stitch-{seq_id}"
+        jobs[stitch_id] = {
+            "op": "local-stitch",
+            "status": "done",
+            "video_bytes": video_parts[0][1],
+            "model": "single-video",
+        }
+        return {
+            "stitch_id": stitch_id,
+            "video_url": f"/api/video/{stitch_id}",
+            "videos_included": 1,
+        }
+
+    tmp_dir = tempfile.mkdtemp(prefix=f"veo-kf-stitch-{seq_id}-")
+    concat_list_path = os.path.join(tmp_dir, "concat.txt")
+    output_path = os.path.join(tmp_dir, "stitched.mp4")
+
+    try:
+        # Sort by video number to ensure correct order
+        video_parts.sort(key=lambda x: x[0])
+
+        for idx, data in video_parts:
+            part_path = os.path.join(tmp_dir, f"video_{idx}.mp4")
+            with open(part_path, "wb") as f:
+                f.write(data)
+
+        with open(concat_list_path, "w") as f:
+            for idx, _ in video_parts:
+                f.write(f"file 'video_{idx}.mp4'\n")
+
+        # Try fast concat (no re-encode)
+        cmd = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+            "-i", concat_list_path, "-c", "copy",
+            "-movflags", "+faststart", output_path,
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+
+        if result.returncode != 0:
+            log.warning(f"[kf-stitch-{seq_id}] concat copy failed, re-encoding: {result.stderr[:200]}")
+            cmd_reencode = [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", concat_list_path,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart", output_path,
+            ]
+            result = subprocess.run(cmd_reencode, capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                raise HTTPException(500, f"ffmpeg failed: {result.stderr[:500]}")
+
+        with open(output_path, "rb") as f:
+            stitched_bytes = f.read()
+
+        stitch_id = f"kf-stitch-{seq_id}"
+        jobs[stitch_id] = {
+            "op": "local-stitch",
+            "status": "done",
+            "video_bytes": stitched_bytes,
+            "model": "ffmpeg-concat",
+        }
+
+        log.info(f"[kf-stitch-{seq_id}] Stitched {len(video_parts)} videos, {len(stitched_bytes)} bytes")
+        return {
+            "stitch_id": stitch_id,
+            "video_url": f"/api/video/{stitch_id}",
+            "videos_included": len(video_parts),
+        }
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @app.get("/api/sequence/{seq_id}")

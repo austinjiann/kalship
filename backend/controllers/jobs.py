@@ -30,6 +30,10 @@ class Jobs(APIController):
             ),
             "source_image_url": payload.get("source_image_url") or payload.get("sourceImageUrl"),
         }
+        
+    @get("/health")
+    async def health_check(self):
+        return json({"status": "ok"})
 
     @post("/create")
     async def create_job(self, request):
