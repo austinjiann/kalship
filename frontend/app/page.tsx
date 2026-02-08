@@ -13,7 +13,7 @@ const CharacterPreview = dynamic(() => import('@/components/CharacterPreview'), 
 const PriceChart = dynamic(() => import('@/components/PriceChart'), { ssr: false })
 
 const TIPS = [
-  { text: 'Welcome to my office!', animation: 'wave' as const },
+  { text: 'Welcome to Kalship', animation: 'wave' as const },
   { text: "Today we're gonna scroll and bet on Kalshi.", animation: 'idle' as const },
   { text: 'Scroll through shorts right here.', animation: 'point' as const },
   { text: 'Tap YES or NO to place your bet.', animation: 'point' as const },
