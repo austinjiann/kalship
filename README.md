@@ -4,6 +4,10 @@ Create your own agentic prediction feed on top of Kalshi
 
 Agentic market matching that links YouTube Shorts to relevant Kalshi markets, with live YES/NO context and optional AI video generation.
 
+
+https://github.com/user-attachments/assets/e0e68e53-62f0-4264-a490-565823de1e67
+
+
 ## Features
 | Feature | Description |
 | --- | --- |
