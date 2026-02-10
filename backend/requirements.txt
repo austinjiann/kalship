@@ -12,3 +12,4 @@ openai
 cryptography
 Pillow
 aiohttp
+firebase-admin

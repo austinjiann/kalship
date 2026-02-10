@@ -146,7 +146,7 @@ function SpeechBubble({ text, children, large }: { text?: string; children?: Rea
 }
 
 export default function Home() {
-  const { feedItems, stats, feedError, isProcessing, processQueue, retryFailed, clearQueue, insertMp4 } = useVideoQueue()
+  const { feedItems, feedError, isProcessing, retryFailed, clearQueue, insertMp4, requestMore } = useVideoQueue()
   const currentIndexRef = useRef(0)
   const [currentMarkets, setCurrentMarkets] = useState<KalshiMarket[]>([])
   const [selectedIdx, setSelectedIdx] = useState(0)
@@ -294,8 +294,9 @@ export default function Home() {
             params.set('hours', `${24 * 365}`)
           }
           const response = await fetch(`${API_URL}/shorts/candlesticks?${params.toString()}`)
-          if (!response.ok) {
-            throw new Error('Failed to fetch candlesticks')
+          if (!response.ok || cancelled) {
+            if (!cancelled) updateHistoryCache(market.ticker, [])
+            return
           }
           const json = await response.json()
           const candles: { ts: number; price: number }[] = Array.isArray(json.candlesticks)
@@ -348,12 +349,6 @@ export default function Home() {
 
   useEffect(() => schedulePrefetch(prefetchMarkets), [prefetchMarkets, schedulePrefetch])
 
-  // Start processing immediately in background
-  useEffect(() => {
-    if (stats.pending > 0 && !isProcessing) {
-      processQueue()
-    }
-  }, [stats.pending, isProcessing, processQueue])
 
   useEffect(() => {
     if (!isFeed || currentMarkets.length === 0) return
@@ -556,7 +551,7 @@ export default function Home() {
 
   // Phone content shared by both tutorial and feed views
   const phoneContent = feedItems.length > 0 ? (
-    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} paused={overlayActive} />
+    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} onNearEnd={requestMore} paused={overlayActive} />
   ) : (
     <div className="flex flex-col items-center justify-center h-full bg-black gap-3 p-4">
       <div className="text-white/30 text-sm">

@@ -15,34 +15,6 @@ export interface VideoEntry {
   label?: string
 }
 
-export const FEED_VIDEOS: VideoEntry[] = [
-  { source: { type: 'youtube', videoId: 'DMRVJ2ZX-L4' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'tn9VrI5pToI' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'hLAz3y61V2I' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'iHd_WWb9FCg' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'chRUPKIBvEw' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'senzNHh7-LE' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'OKIBzddVXCk' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'p5CYi54MZEY' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'UyXQjeiXaEk' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'ug0mH7dtR8g' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'sKyma2S9D1Y' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'FobDbwqoUUE' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'HZOkwNsYFdo' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'w1rbnM6A4AA' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: '_qW6a1A9gb0' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: '3fQhDJlRJYg' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'TqWbMZIQAoo' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'pA4PB5rBNu8' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'GQTRH0cFxSA' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'S_6JTgoZ5W8' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'f2v3qWOLTiM' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'gqMgCRCeW9c' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'TTplugqgUfg' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'k4CKB-db4XM' }, topic: VideoTopic.GENERAL },
-  { source: { type: 'youtube', videoId: 'M5iey7QcODk' }, topic: VideoTopic.GENERAL },
-]
-
 export const AI_REEL_VIDEOS: VideoEntry[] = [
   {
     source: { type: 'mp4', url: 'https://storage.googleapis.com/qhacks-486618-storage/videos/13118567516871963719/la.mp4' },
@@ -137,7 +109,3 @@ export function findVisualizationVideo(keywords: string[]): VideoEntry | null {
   return pool[Math.floor(Math.random() * pool.length)]
 }
 
-// Backward compat: YouTube ID strings only
-export const VIDEO_IDS = FEED_VIDEOS
-  .filter((v): v is VideoEntry & { source: { type: 'youtube'; videoId: string } } => v.source.type === 'youtube')
-  .map(v => v.source.videoId)

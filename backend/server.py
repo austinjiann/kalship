@@ -8,7 +8,9 @@ if settings.GOOGLE_APPLICATION_CREDENTIALS:
 from blacksheep import Application
 from rodi import Container
 
+from services.crawler_service import CrawlerService
 from services.feed_service import FeedService
+from services.firestore_service import FirestoreService
 from services.job_service import JobService
 from services.vertex_service import VertexService
 from services.youtube_service import YoutubeService
@@ -18,6 +20,8 @@ services = Container()
 services.add_scoped(YoutubeService)
 services.add_scoped(KalshiService)
 services.add_scoped(FeedService)
+services.add_singleton(FirestoreService)
+services.add_scoped(CrawlerService)
 services.add_singleton(VertexService)
 services.add_singleton(JobService)
 

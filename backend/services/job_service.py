@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from google.cloud import storage
 import aiohttp
 from models.job import JobStatus, VideoJobRequest
+from services.firestore_service import FirestoreService
 from services.vertex_service import VertexService
 from utils.env import settings
 from utils.gemini_prompt_builder import create_first_image_prompt
@@ -74,9 +75,10 @@ async def fetch_image_from_url(url: str) -> Optional[bytes]:
 
 
 class JobService:
-    def __init__(self, vertex_service: VertexService):
+    def __init__(self, vertex_service: VertexService, firestore_service: FirestoreService):
         logger.info("Initializing JobService...")
         self.vertex_service = vertex_service
+        self.firestore_service = firestore_service
 
         self.local_queue: asyncio.Queue[dict] = asyncio.Queue()
         self.local_worker_task: asyncio.Task | None = None
@@ -372,6 +374,16 @@ class JobService:
                 job["job_end_time"] = datetime.now().isoformat()
                 await self._save_job(job_id, job)
                 print(f"[{job_id[:8]}] Video complete", flush=True)
+                # Store in Firestore generated_videos collection for frontend polling
+                try:
+                    await self.firestore_service.store_generated_video(job_id, {
+                        "video_url": video_url,
+                        "title": job.get("title", ""),
+                        "kalshi": job.get("kalshi", []),
+                        "bet_side": job.get("bet_side", ""),
+                    })
+                except Exception as fs_exc:
+                    logger.error(f"[{job_id[:8]}] Failed to store generated video in Firestore: {fs_exc}")
                 return JobStatus(status="done", job_start_time=job_start_time, job_end_time=job_end_time, video_url=video_url, original_bet_link=original_bet_link, image_url=image_url)
             if result.status == "error":
                 job["status"] = "error"

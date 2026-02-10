@@ -7,6 +7,7 @@ import ShortCard from './ShortCard'
 interface FeedProps {
   items: FeedItem[]
   onCurrentItemChange?: (item: FeedItem, index: number) => void
+  onNearEnd?: () => void
   paused?: boolean
 }
 
@@ -15,15 +16,20 @@ export interface FeedRef {
   scrollToPrev: () => void
 }
 
-const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCurrentItemChange, paused }, ref) {
+const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCurrentItemChange, onNearEnd, paused }, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const activeIndexRef = useRef(0)
   const onCurrentItemChangeRef = useRef(onCurrentItemChange)
+  const onNearEndRef = useRef(onNearEnd)
   const lastNotifiedVideoRef = useRef<string | undefined>(undefined)
   const [activeIndex, setActiveIndex] = useState(0)
   useEffect(() => {
     onCurrentItemChangeRef.current = onCurrentItemChange
   }, [onCurrentItemChange])
+
+  useEffect(() => {
+    onNearEndRef.current = onNearEnd
+  }, [onNearEnd])
 
   const itemsRef = useRef(items)
   useEffect(() => {
@@ -47,6 +53,10 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
     if (activeItem) {
       lastNotifiedVideoRef.current = activeItem.id
       onCurrentItemChangeRef.current?.(activeItem, index)
+    }
+    // Trigger fetch more when near end of feed
+    if (index >= itemsRef.current.length - 3) {
+      onNearEndRef.current?.()
     }
   }, [])
 
@@ -111,5 +121,5 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
 })
 
 export default memo(FeedComponent, (prev, next) => {
-  return prev.items === next.items && prev.onCurrentItemChange === next.onCurrentItemChange && prev.paused === next.paused
+  return prev.items === next.items && prev.onCurrentItemChange === next.onCurrentItemChange && prev.onNearEnd === next.onNearEnd && prev.paused === next.paused
 })
