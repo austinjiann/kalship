@@ -1,8 +1,12 @@
-# Kalship <img src="./assets/kalship-logo.png" alt="Logo" height="32">
+# Kalship <img src="/frontend/public/kalship-text.png" alt="Logo" height="32">
 
 Create your own agentic prediction feed on top of Kalshi
 
 Agentic market matching that links YouTube Shorts to relevant Kalshi markets, with live YES/NO context and optional AI video generation.
+
+
+https://github.com/user-attachments/assets/e0e68e53-62f0-4264-a490-565823de1e67
+
 
 ## Features
 | Feature | Description |
@@ -13,6 +17,12 @@ Agentic market matching that links YouTube Shorts to relevant Kalshi markets, wi
 | Guided Betting Overlay | Includes a tutorial flow, 3D character coach, and external-bet warning |
 | Injected Visualization Reels | After a YES/NO action, themed MP4 clips are inserted into the feed |
 | Async Video Job Pipeline | Backend supports Gemini + Veo generation with Cloud Storage + Cloud Tasks |
+
+## Architecture (Local)
+- **Frontend (Next.js):** Reel UI, market panel, charts, tutorial, and job-status polling.
+- **Backend API (BlackSheep):** Shorts-to-market matching, candlesticks, advice, job create/status.
+- **Worker:** Processes async video-generation jobs.
+- **GCP Services:** Cloud Tasks for queueing, Cloud Storage for generated media.
 
 ## Local Setup
 ### Prerequisites
@@ -80,6 +90,14 @@ bash setup-gcp.sh
 ```
 Then copy the emitted values into `backend/.env`.
 
+## Data Flow
+1. Frontend calls `/shorts/feed` or `/shorts/match`.
+2. Backend combines YouTube metadata + Kalshi market context and returns matches.
+3. User starts generation via `/jobs/create`.
+4. Backend enqueues a Cloud Task to `/worker/process`.
+5. Worker generates assets, stores them in Cloud Storage, updates job state.
+6. Frontend polls `/jobs/status/{job_id}` and injects completed clips into the feed.
+
 ## Usage
 1. Start backend and frontend.
 2. Open `http://localhost:3000`.
@@ -101,8 +119,10 @@ Then copy the emitted values into `backend/.env`.
 | `/worker/process` | POST | Worker endpoint for queued generation jobs |
 
 ## Tech Stack
-| Component | Technologies |
+| Layer | Technologies |
 | --- | --- |
-| Frontend | Next.js 16, React 19, Tailwind CSS v4, Framer Motion, React Three Fiber, Drei, Lightweight Charts |
-| Backend | BlackSheep, Uvicorn, aiohttp, OpenAI API, Kalshi Trade API |
-| Video Pipeline | Vertex AI (Imagen + Veo), Google Cloud Storage, Cloud Tasks |
+| Frontend | Next.js, React, TypeScript, Tailwind CSS, Framer Motion, React Three Fiber, Drei, Lightweight Charts |
+| Backend API | Python, BlackSheep, Uvicorn, aiohttp |
+| Integrations | Kalshi API, YouTube Data API, OpenAI API |
+| Async + Storage | Google Cloud Tasks, Google Cloud Storage |
+| Video + Deploy | Vertex AI (Veo), Google Cloud Run |
