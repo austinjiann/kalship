@@ -108,14 +108,18 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
 
   return (
     <div ref={containerRef} className="feed-container">
-      {items.map((item, index) => (
-        <ShortCard
-          key={item.youtube.video_id || item.id}
-          item={item}
-          isActive={index === safeActiveIndex && !paused}
-          shouldRender={Math.abs(index - safeActiveIndex) <= 1}
-        />
-      ))}
+      {items.map((item, index) => {
+        const distance = index - safeActiveIndex
+        return (
+          <ShortCard
+            key={item.youtube.video_id || item.id}
+            item={item}
+            isActive={index === safeActiveIndex && !paused}
+            shouldRender={Math.abs(distance) <= 1}
+            prefetch={distance === 2}
+          />
+        )
+      })}
     </div>
   )
 })

@@ -16,6 +16,9 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const KALSHI_GREEN = '#00d084'
 const KALSHI_AREA_TOP = 'rgba(0, 208, 132, 0.15)'
 const KALSHI_AREA_BOTTOM = 'rgba(0, 208, 132, 0)'
+const KALSHI_RED = '#ef4444'
+const KALSHI_RED_AREA_TOP = 'rgba(239, 68, 68, 0.10)'
+const KALSHI_RED_AREA_BOTTOM = 'rgba(239, 68, 68, 0)'
 const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat('en-US', { month: 'short' })
 
 export type PriceChartReadyPayload = {
@@ -108,6 +111,7 @@ function PriceChartInner({
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Area'> | null>(null)
+  const noSeriesRef = useRef<ISeriesApi<'Area'> | null>(null)
   const onReadyRef = useRef(onReady)
 
   useEffect(() => {
@@ -180,6 +184,17 @@ function PriceChartInner({
 
     seriesRef.current = series
 
+    const noSeries = chart.addAreaSeries({
+      lineColor: KALSHI_RED,
+      topColor: KALSHI_RED_AREA_TOP,
+      bottomColor: KALSHI_RED_AREA_BOTTOM,
+      lineWidth: 2,
+      crosshairMarkerVisible: true,
+      priceLineVisible: true,
+      lastValueVisible: true,
+    })
+    noSeriesRef.current = noSeries
+
     let currentPointCount = 0
     let currentSpanSeconds = 0
     let cancelled = false
@@ -224,6 +239,11 @@ function PriceChartInner({
       }
 
       series.setData(data)
+      const noData: AreaData[] = data.map(d => ({
+        time: d.time,
+        value: clampToKalshiRange(100 - d.value),
+      }))
+      noSeries.setData(noData)
       chart.timeScale().fitContent()
       currentPointCount = data.length
       currentSpanSeconds = nextSpanSeconds
@@ -347,6 +367,7 @@ function PriceChartInner({
       chart.remove()
       chartRef.current = null
       seriesRef.current = null
+      noSeriesRef.current = null
     }
   }, [ticker, seriesTicker, priceHistory, createdTime, openTime, marketStartTs])
 

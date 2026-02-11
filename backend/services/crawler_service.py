@@ -105,6 +105,7 @@ class CrawlerService:
                         "youtube": item["youtube"],
                         "kalshi": item["kalshi"],
                         "keywords": item.get("keywords", []),
+                        "channel": item["youtube"].get("channel", ""),
                         "crawled_at": datetime.now(timezone.utc),
                         "source": "crawler",
                     })
@@ -137,6 +138,7 @@ class CrawlerService:
                 "youtube": item["youtube"],
                 "kalshi": item["kalshi"],
                 "keywords": item.get("keywords", []),
+                "channel": item["youtube"].get("channel", ""),
                 "crawled_at": datetime.now(timezone.utc),
                 "source": "seed",
             })

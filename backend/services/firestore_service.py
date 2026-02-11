@@ -23,12 +23,40 @@ class FirestoreService:
     # ── feed_pool CRUD ──
 
     async def get_random_feed_items(self, count: int = 10, exclude_ids: Optional[set[str]] = None) -> list[dict]:
-        active_ids = await self.get_all_active_video_ids()
+        active_items = await self._get_all_active_ids_with_channel()
         if exclude_ids:
-            active_ids = [vid for vid in active_ids if vid not in exclude_ids]
-        if not active_ids:
+            active_items = [(vid, ch) for vid, ch in active_items if vid not in exclude_ids]
+        if not active_items:
             return []
-        sampled = random.sample(active_ids, min(count, len(active_ids)))
+
+        # Group by channel for diversity sampling
+        by_channel: dict[str, list[str]] = {}
+        for vid, channel in active_items:
+            by_channel.setdefault(channel, []).append(vid)
+
+        # Shuffle within each channel group
+        for ids in by_channel.values():
+            random.shuffle(ids)
+
+        # Round-robin across channels
+        sampled: list[str] = []
+        channels = list(by_channel.keys())
+        random.shuffle(channels)
+        while len(sampled) < count and channels:
+            next_channels = []
+            for ch in channels:
+                if len(sampled) >= count:
+                    break
+                ids = by_channel[ch]
+                if ids:
+                    sampled.append(ids.pop())
+                if ids:
+                    next_channels.append(ch)
+            channels = next_channels
+
+        if not sampled:
+            return []
+
         items: list[dict] = []
         # Firestore 'in' queries max 30 per batch
         for i in range(0, len(sampled), 30):
@@ -40,6 +68,10 @@ class FirestoreService:
                 data = doc.to_dict()
                 data["_doc_id"] = doc.id
                 items.append(data)
+
+        # Preserve the round-robin ordering
+        order = {vid: idx for idx, vid in enumerate(sampled)}
+        items.sort(key=lambda d: order.get(d.get("_doc_id", ""), len(sampled)))
         return items
 
     async def upsert_feed_item(self, video_id: str, data: dict) -> None:
@@ -64,6 +96,11 @@ class FirestoreService:
         query = self.db.collection("feed_pool").where("active", "==", True).select([])
         docs = await query.get()
         return [doc.id for doc in docs]
+
+    async def _get_all_active_ids_with_channel(self) -> list[tuple[str, str]]:
+        query = self.db.collection("feed_pool").where("active", "==", True).select(["channel"])
+        docs = await query.get()
+        return [(doc.id, (doc.to_dict() or {}).get("channel", "")) for doc in docs]
 
     # ── generated_videos CRUD ──
 

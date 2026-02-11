@@ -841,22 +841,28 @@ export default function Home() {
                   }}
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-white/40 uppercase tracking-wider">Yes Price</span>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm text-white/70 font-medium">{expandedMarket.yes_price}¢</span>
-                      {resolvedPriceHistory && resolvedPriceHistory.length > 1 && (() => {
-                        const prices = resolvedPriceHistory.map((p) => p.price).filter((v) => Number.isFinite(v))
-                        if (prices.length < 2) return null
-                        const trending = prices[prices.length - 1] >= prices[0]
-                        const diff = prices[prices.length - 1] - prices[0]
-                        if (!Number.isFinite(diff)) return null
-                        return (
-                          <span className={`text-xs font-medium ${trending ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {trending ? '+' : ''}{diff.toFixed(0)}¢ since open
-                          </span>
-                        )
-                      })()}
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-white/40 uppercase tracking-wider">Yes</span>
+                        <span className="text-sm text-emerald-400 font-medium">{expandedMarket.yes_price}¢</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-white/40 uppercase tracking-wider">No</span>
+                        <span className="text-sm text-red-400 font-medium">{expandedMarket.no_price}¢</span>
+                      </div>
                     </div>
+                    {resolvedPriceHistory && resolvedPriceHistory.length > 1 && (() => {
+                      const prices = resolvedPriceHistory.map((p) => p.price).filter((v) => Number.isFinite(v))
+                      if (prices.length < 2) return null
+                      const trending = prices[prices.length - 1] >= prices[0]
+                      const diff = prices[prices.length - 1] - prices[0]
+                      if (!Number.isFinite(diff)) return null
+                      return (
+                        <span className={`text-xs font-medium ${trending ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {trending ? '+' : ''}{diff.toFixed(0)}¢ since open
+                        </span>
+                      )
+                    })()}
                   </div>
                   <div className="relative">
                     {graphStatus === 'loading' && (

@@ -47,7 +47,7 @@ Available events:
 
 Return ONLY a single integer index (0-based) of the best matching event.
 Pick the event most closely related to the video topic.
-If nothing matches well, return 0.
+If nothing matches well, return -1.
 
 Return ONLY the number, nothing else."""
 
@@ -229,8 +229,13 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
         event_idx = await self._match_keywords_to_events(keywords, events)
         print(f"[{video_id}] Matched event index: {event_idx}")
 
+        if event_idx is not None and event_idx < 0:
+            print(f"[{video_id}] SKIPPED: no relevant market")
+            return None
+
         if event_idx is None or event_idx >= len(events):
-            event_idx = 0
+            print(f"[{video_id}] SKIPPED: invalid event index")
+            return None
 
         best_event = events[event_idx]
         print(f"[{video_id}] Matched event: {best_event.get('title', 'Unknown')}")

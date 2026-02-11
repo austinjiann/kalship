@@ -24,9 +24,10 @@ interface ShortCardProps {
   item: FeedItem
   isActive: boolean
   shouldRender?: boolean
+  prefetch?: boolean
 }
 
-function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
+function ShortCard({ item, isActive, shouldRender = true, prefetch = false }: ShortCardProps) {
   const isMp4 = item.video?.type === 'mp4'
 
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -241,14 +242,25 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
   if (!shouldRender) {
     return (
       <div className="short-card">
-        <div className="video-container" style={{ width: '100%', height: '100%', background: '#000' }} />
+        {prefetch && !isMp4 && item.youtube.video_id && (
+          <link rel="prefetch" href={iframeSrc} as="document" />
+        )}
+        <div className="video-container" style={{
+          width: '100%',
+          height: '100%',
+          background: item.youtube.thumbnail
+            ? `url(${item.youtube.thumbnail}) center/cover no-repeat #000`
+            : '#000',
+        }} />
       </div>
     )
   }
 
   return (
     <div className="short-card">
-      <div className="video-container">
+      <div className="video-container" style={item.youtube.thumbnail ? {
+        background: `url(${item.youtube.thumbnail}) center/cover no-repeat #000`,
+      } : undefined}>
         <iframe
           ref={iframeRef}
           id={iframeId}
@@ -258,6 +270,7 @@ function ShortCard({ item, isActive, shouldRender = true }: ShortCardProps) {
           allowFullScreen
           className="video-iframe"
           style={{ pointerEvents: 'auto' }}
+          loading={isActive ? 'eager' : 'lazy'}
           onLoad={handleIframeLoad}
         />
       </div>
@@ -306,6 +319,7 @@ export default memo(ShortCard, (prevProps, nextProps) => {
   return (
     prevProps.item.id === nextProps.item.id &&
     prevProps.isActive === nextProps.isActive &&
-    prevProps.shouldRender === nextProps.shouldRender
+    prevProps.shouldRender === nextProps.shouldRender &&
+    prevProps.prefetch === nextProps.prefetch
   )
 })
