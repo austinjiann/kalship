@@ -8,6 +8,7 @@ interface FeedProps {
   items: FeedItem[]
   onCurrentItemChange?: (item: FeedItem, index: number) => void
   onNearEnd?: (currentIndex: number) => void
+  onDelete?: (itemId: string) => void
   paused?: boolean
 }
 
@@ -16,7 +17,7 @@ export interface FeedRef {
   scrollToPrev: () => void
 }
 
-const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCurrentItemChange, onNearEnd, paused }, ref) {
+const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCurrentItemChange, onNearEnd, onDelete, paused }, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const activeIndexRef = useRef(0)
   const onCurrentItemChangeRef = useRef(onCurrentItemChange)
@@ -117,6 +118,7 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
             isActive={index === safeActiveIndex && !paused}
             shouldRender={Math.abs(distance) <= 1}
             prefetch={distance === 2}
+            onDelete={onDelete}
           />
         )
       })}
@@ -125,5 +127,5 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
 })
 
 export default memo(FeedComponent, (prev, next) => {
-  return prev.items === next.items && prev.onCurrentItemChange === next.onCurrentItemChange && prev.onNearEnd === next.onNearEnd && prev.paused === next.paused
+  return prev.items === next.items && prev.onCurrentItemChange === next.onCurrentItemChange && prev.onNearEnd === next.onNearEnd && prev.onDelete === next.onDelete && prev.paused === next.paused
 })

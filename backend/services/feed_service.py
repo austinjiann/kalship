@@ -31,37 +31,6 @@ Description: {description[:500]}"""
         keywords_str = response.choices[0].message.content.strip()
         return [k.strip() for k in keywords_str.split(",") if k.strip()]
 
-    async def _match_keywords_to_events(
-        self, keywords: list[str], events: list[dict]
-    ) -> Optional[int]:
-        event_titles = [f"{i}: {e.get('title', 'Unknown')}" for i, e in enumerate(events)]
-        event_list = "\n".join(event_titles)
-        keywords_str = ", ".join(keywords)
-
-        prompt = f"""Match video keywords to the BEST prediction market event.
-
-Video keywords: {keywords_str}
-
-Available events:
-{event_list}
-
-Return ONLY a single integer index (0-based) of the best matching event.
-Pick the event most closely related to the video topic.
-If nothing matches well, return -1.
-
-Return ONLY the number, nothing else."""
-
-        response = await self.openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-        )
-        try:
-            result = response.choices[0].message.content.strip()
-            return int(result)
-        except (ValueError, TypeError):
-            return 0
-
     async def _format_market_display(
         self, market: dict, event: dict, keywords: list[str]
     ) -> dict:
@@ -77,8 +46,8 @@ Outcome text: {yes_sub_title}
 Rules: {rules}
 Video keywords: {keywords_str}
 
-Create a clean, user-friendly bet display:
-1. "question": A clear, concise yes/no question about this bet (e.g., "Will Arsenal win today?")
+Create a clean, user-friendly trade display:
+1. "question": A clear, concise yes/no question about this trade (e.g., "Will Arsenal win today?")
 2. "outcome": The single most relevant team/item/subject from the outcome text based on the video keywords (e.g., "Arsenal"). Just the name, no "yes" prefix.
 
 Return JSON only: {{"question": "...", "outcome": "..."}}"""
@@ -219,54 +188,9 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
                     "keywords": keywords,
                 }
 
-        events = await self.kalshi_service.get_events(status="open", limit=200)
-        print(f"[{video_id}] Events fetched: {len(events)}")
-
-        if not events:
-            print(f"[{video_id}] FAILED: No events returned")
-            return None
-
-        event_idx = await self._match_keywords_to_events(keywords, events)
-        print(f"[{video_id}] Matched event index: {event_idx}")
-
-        if event_idx is not None and event_idx < 0:
-            print(f"[{video_id}] SKIPPED: no relevant market")
-            return None
-
-        if event_idx is None or event_idx >= len(events):
-            print(f"[{video_id}] SKIPPED: invalid event index")
-            return None
-
-        best_event = events[event_idx]
-        print(f"[{video_id}] Matched event: {best_event.get('title', 'Unknown')}")
-
-        markets = best_event.get("markets", [])
-        if not markets:
-            markets = await self.kalshi_service.get_markets_for_event(best_event.get("event_ticker", ""))
-
-        if not markets:
-            print(f"[{video_id}] FAILED: No markets for event")
-            return None
-
-        selected = markets[:10]
-        series_ticker = best_event.get("series_ticker", "")
-        print(f"[{video_id}] SUCCESS (event) - {len(selected)} markets")
-        kalshi_list = await asyncio.gather(*[
-            self._build_market_dict(m, best_event, series_ticker, keywords)
-            for m in selected
-        ])
-
-        return {
-            "youtube": {
-                "video_id": video_id,
-                "title": metadata["title"],
-                "thumbnail": metadata["thumbnail"],
-                "channel": metadata["channel"],
-                "channel_thumbnail": metadata.get("channel_thumbnail", ""),
-            },
-            "kalshi": list(kalshi_list),
-            "keywords": keywords,
-        }
+        # No series detected or series had no markets — discard
+        print(f"[{video_id}] SKIPPED: no series match")
+        return None
 
     async def get_feed(self, video_ids: list[str]) -> list[dict]:
         await self.kalshi_service.ensure_session()
@@ -292,7 +216,7 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
         no_price: float,
     ) -> str:
         price = yes_price if side.upper() == "YES" else no_price
-        prompt = f"""You are Joe, a friendly and slightly sarcastic betting advisor. Keep it very brief.
+        prompt = f"""You are Joe, a friendly and slightly sarcastic trading advisor. Keep it very brief.
 
 Format: One short sentence (max 15 words), then exactly 3 bullet points (each max 10 words). Use this exact format:
 <sentence>
@@ -301,7 +225,7 @@ Format: One short sentence (max 15 words), then exactly 3 bullet points (each ma
 - <point 3>
 
 Market: {question}
-Bet side: {side}
+Trade side: {side}
 Amount: ${amount}
 Current odds: {side} at {price}¢
 
@@ -316,7 +240,7 @@ Give your quick take. Be casual and fun."""
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            return f"Hmm, I'm having trouble thinking right now... but betting ${amount} on {side}? Just make sure you're okay losing it!"
+            return f"Hmm, I'm having trouble thinking right now... but trading ${amount} on {side}? Just make sure you're okay losing it!"
 
     async def get_candlesticks(
         self,

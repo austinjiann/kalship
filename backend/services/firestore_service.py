@@ -92,6 +92,14 @@ class FirestoreService:
             count += 1
         return count
 
+    async def deactivate_feed_item(self, video_id: str) -> bool:
+        ref = self.db.collection("feed_pool").document(video_id)
+        doc = await ref.get()
+        if not doc.exists:
+            return False
+        await ref.update({"active": False})
+        return True
+
     async def get_all_active_video_ids(self) -> list[str]:
         query = self.db.collection("feed_pool").where("active", "==", True).select([])
         docs = await query.get()

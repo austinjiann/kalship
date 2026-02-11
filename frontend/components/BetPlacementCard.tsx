@@ -124,7 +124,7 @@ export default function BetPlacementCard({ market, initialSide, onSubmit, onClos
         <span>Payout: <span className="text-white/70 font-medium">${payout}</span></span>
       </div>
 
-      {/* Place Bet button */}
+      {/* Place Trade button */}
       <button
         onClick={handleSubmit}
         disabled={!amount || Number(amount) <= 0}
@@ -141,7 +141,7 @@ export default function BetPlacementCard({ market, initialSide, onSubmit, onClos
             : '0 4px 15px rgba(239, 68, 68, 0.4)',
         }}
       >
-        Place {side} Bet {amount ? `$${amount}` : ''}
+        Place {side} Trade {amount ? `$${amount}` : ''}
       </button>
     </div>
   )

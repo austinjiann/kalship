@@ -174,6 +174,14 @@ export function useVideoQueue() {
     fetchBatch(BATCH_SIZE)
   }, [fetchBatch])
 
+  const removeItem = useCallback((itemId: string) => {
+    setFeedItems(prev => {
+      const next = prev.filter(i => i.id !== itemId)
+      saveFeedResults(next.filter(i => !i.isInjected))
+      return next
+    })
+  }, [])
+
   const clearQueue = useCallback(() => {
     setFeedItems([])
     seenVideoIds.current.clear()
@@ -198,6 +206,7 @@ export function useVideoQueue() {
     retryFailed,
     clearQueue,
     requestVideoGeneration,
+    removeItem,
     requestMore,
     setCurrentIndex,
   }

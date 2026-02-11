@@ -52,9 +52,9 @@ const CharacterPreview = dynamic(() => import('@/components/CharacterPreview'), 
 
 const TIPS = [
   { text: 'Welcome to Kalship!', animation: 'wave' as const },
-  { text: "Today we're gonna scroll and bet on Kalshi.", animation: 'idle' as const },
+  { text: "Today we're gonna scroll and trade on Kalshi.", animation: 'idle' as const },
   { text: 'Scroll through shorts right here.', animation: 'point' as const },
-  { text: 'Tap YES or NO to place your bet.', animation: 'point' as const },
+  { text: 'Tap YES or NO to place a trade.', animation: 'point' as const },
   { text: "Let's go!", animation: 'wave' as const },
 ]
 
@@ -146,7 +146,7 @@ function SpeechBubble({ text, children, large }: { text?: string; children?: Rea
 }
 
 export default function Home() {
-  const { feedItems, feedError, isProcessing, retryFailed, clearQueue, requestVideoGeneration, requestMore, setCurrentIndex } = useVideoQueue()
+  const { feedItems, feedError, isProcessing, retryFailed, clearQueue, requestVideoGeneration, removeItem, requestMore, setCurrentIndex } = useVideoQueue()
   const currentIndexRef = useRef(0)
   const [currentMarkets, setCurrentMarkets] = useState<KalshiMarket[]>([])
   const [selectedIdx, setSelectedIdx] = useState(0)
@@ -160,8 +160,6 @@ export default function Home() {
   const historyFetchInFlight = useRef<Set<string>>(new Set())
   const historyByTickerRef = useRef(historyByTicker)
   const isFeed = stage === 5
-  const [showKalshiWarning, setShowKalshiWarning] = useState(false)
-  const [pendingKalshiUrl, setPendingKalshiUrl] = useState<string | null>(null)
   const [betConfirmation, setBetConfirmation] = useState<{ side: 'YES' | 'NO'; message: string } | null>(null)
   const [currentIsInjected, setCurrentIsInjected] = useState(false)
   const [showBetInput, setShowBetInput] = useState<{ side: 'YES' | 'NO' } | null>(null)
@@ -421,7 +419,7 @@ export default function Home() {
 
   const handleBet = useCallback((side: 'YES' | 'NO') => {
     if (!expandedMarket) return
-    console.log(`Bet placed: ${side} on ${expandedMarket.ticker}`)
+    console.log(`Trade placed: ${side} on ${expandedMarket.ticker}`)
 
     if (currentIsInjected) {
       setShowBetInput({ side })
@@ -433,7 +431,7 @@ export default function Home() {
 
     setBetConfirmation({
       side,
-      message: `You bet ${side}! Your bet video is being generated!`,
+      message: `You traded ${side}! Your trade video is being generated!`,
     })
   }, [expandedMarket, requestVideoGeneration, currentIsInjected])
 
@@ -458,30 +456,6 @@ export default function Home() {
     },
     [updateHistoryCache, setChartStatusByTicker]
   )
-
-  const handleKalshiClick = useCallback((e: React.MouseEvent<HTMLAnchorElement>) => {
-    e.preventDefault()
-    const url = e.currentTarget.href
-    if (currentIsInjected) {
-      window.open(url, '_blank')
-      return
-    }
-    setPendingKalshiUrl(url)
-    setShowKalshiWarning(true)
-  }, [currentIsInjected])
-
-  const dismissKalshiWarning = useCallback(() => {
-    setShowKalshiWarning(false)
-    setPendingKalshiUrl(null)
-  }, [])
-
-  const proceedToKalshi = useCallback(() => {
-    if (pendingKalshiUrl) {
-      window.open(pendingKalshiUrl, '_blank')
-    }
-    setShowKalshiWarning(false)
-    setPendingKalshiUrl(null)
-  }, [pendingKalshiUrl])
 
   const dismissBetInput = useCallback(() => {
     setShowBetInput(null)
@@ -522,17 +496,16 @@ export default function Home() {
 
   // Escape key dismisses overlays
   useEffect(() => {
-    if (!showKalshiWarning && !showBetInput && !adviceText) return
+    if (!showBetInput && !adviceText) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (adviceText) dismissAdvice()
         else if (showBetInput) dismissBetInput()
-        else if (showKalshiWarning) dismissKalshiWarning()
       }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [showKalshiWarning, dismissKalshiWarning, showBetInput, dismissBetInput, adviceText, dismissAdvice])
+  }, [showBetInput, dismissBetInput, adviceText, dismissAdvice])
 
   // Auto-dismiss bet confirmation after 3 seconds
   useEffect(() => {
@@ -545,14 +518,14 @@ export default function Home() {
   const waitingMessage = feedItems.length === 0 ? 'Loading shorts...' : 'Hang tight...'
   const currentTipText = isFeed ? FEED_TIP : (waitingForFeed && stage === 4 ? waitingMessage : (TIPS[stage]?.text ?? ''))
 
-  const overlayActive = showKalshiWarning || !!betConfirmation || !!showBetInput || !!adviceText
+  const overlayActive = !!betConfirmation || !!showBetInput || !!adviceText
 
   // rotationY per stage: point stages face toward phone, feed faces phone more
   const currentRotationY = isFeed ? 0.8 : (currentAnimation === 'point' ? 0.4 : 0.3)
 
   // Phone content shared by both tutorial and feed views
   const phoneContent = feedItems.length > 0 ? (
-    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} onNearEnd={(idx) => requestMore(idx)} paused={overlayActive} />
+    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} onNearEnd={(idx) => requestMore(idx)} onDelete={removeItem} paused={overlayActive} />
   ) : (
     <div className="flex flex-col items-center justify-center h-full bg-black gap-3 p-4">
       <div className="text-white/30 text-sm">
@@ -783,7 +756,6 @@ export default function Home() {
                     href={`https://kalshi.com/events/${expandedMarket.event_ticker || expandedMarket.ticker}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    onClick={handleKalshiClick}
                     className="flex items-center gap-1 text-white/50 hover:text-white transition-colors"
                   >
                     View on Kalshi
@@ -887,91 +859,6 @@ export default function Home() {
                 </div>
               )}
             </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Kalshi external link warning overlay */}
-        <AnimatePresence>
-          {showKalshiWarning && (
-            <>
-              {/* Dimming backdrop */}
-              <motion.div
-                key="kalshi-backdrop"
-                className="fixed inset-0 z-40"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-                style={{ background: 'rgba(0, 0, 0, 0.6)' }}
-                onClick={dismissKalshiWarning}
-              />
-
-              {/* Character + speech bubble container */}
-              <motion.div
-                key="kalshi-warning"
-                className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
-              >
-                <div className="flex flex-col items-center pointer-events-auto">
-                  {/* Speech bubble */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 20, scale: 0.9 }}
-                    animate={{ opacity: 1, y: 0, scale: 1 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.5, delay: 0.2, ease: easeCubic }}
-                  >
-                    <SpeechBubble
-                      text="Whoa whoa whoa! Don't go betting out there like a maniac. Stay here and bet smart with me!"
-                      large
-                    />
-                  </motion.div>
-
-                  {/* Character */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 40 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 20 }}
-                    transition={{ duration: 0.5, ease: easeCubic }}
-                  >
-                    <CharacterPreview
-                      animation="point"
-                      size={{ width: 500, height: 600 }}
-                      rotationY={0.3}
-                    />
-                  </motion.div>
-
-                  {/* Warning text + buttons */}
-                  <motion.div
-                    className="flex flex-col items-center gap-4 -mt-8"
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.4, delay: 0.35, ease: easeCubic }}
-                  >
-                    <p className="text-white/60 text-sm text-center max-w-[400px]" style={{ fontFamily: 'var(--font-playfair), serif' }}>
-                      If you still want to bet externally, go ahead... but be careful out there!
-                    </p>
-                    <div className="flex gap-3">
-                      <button
-                        onClick={dismissKalshiWarning}
-                        className="px-6 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer bg-emerald-500/25 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/40 hover:border-emerald-500/60"
-                      >
-                        Go Back to Feed
-                      </button>
-                      <button
-                        onClick={proceedToKalshi}
-                        className="px-6 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer bg-white/[0.08] border border-white/15 text-white/50 hover:bg-white/20 hover:text-white/70"
-                      >
-                        Proceed to Kalshi
-                      </button>
-                    </div>
-                  </motion.div>
-                </div>
-              </motion.div>
-            </>
           )}
         </AnimatePresence>
 

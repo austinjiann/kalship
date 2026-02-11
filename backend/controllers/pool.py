@@ -47,6 +47,11 @@ class Pool(APIController):
         await self.firestore_service.mark_consumed(job_id)
         return json({"status": "consumed"})
 
+    @post("/feed/{video_id}/delete")
+    async def delete_feed_item(self, video_id: str):
+        removed = await self.firestore_service.deactivate_feed_item(video_id)
+        return json({"status": "deleted" if removed else "not_found"})
+
     @get("/stats")
     async def get_stats(self):
         stats = await self.firestore_service.get_pool_stats()

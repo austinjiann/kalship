@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-QHacks is a prediction market app that matches YouTube Shorts with Kalshi betting markets. Users scroll through a TikTok-style feed where each video is paired with a relevant bet they can place.
+QHacks is a prediction market app that matches YouTube Shorts with Kalshi trading markets. Users scroll through a TikTok-style feed where each video is paired with a relevant trade they can place.
 
 ## Commands
 
@@ -32,7 +32,7 @@ python main.py       # Runs uvicorn on port 8000
 2. Videos are sent to backend `/shorts/feed` endpoint
 3. `FeedService` extracts keywords via OpenAI, matches to Kalshi markets
 4. Results cached in Firebase Firestore (`video_matches` collection)
-5. Frontend displays video + bet card overlay in iPhone mockup
+5. Frontend displays video + trade card overlay in iPhone mockup
 
 ### Backend Services (Dependency Injected via rodi)
 - **FeedService**: Core matching logic - YouTube metadata → OpenAI keyword extraction → Kalshi API market matching
