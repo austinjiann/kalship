@@ -6,7 +6,7 @@ import { FeedItem } from '@/types'
 
 const CharacterPreview = dynamic(() => import('@/components/CharacterPreview'), { ssr: false })
 
-const YT_BASE_ORIGIN = 'https://www.youtube.com'
+const YT_BASE_ORIGIN = 'https://www.youtube-nocookie.com'
 const ALLOWED_ORIGINS = new Set<string>([YT_BASE_ORIGIN, 'https://www.youtube-nocookie.com'])
 
 let globalMuted = true
@@ -40,7 +40,7 @@ function ShortCard({ item, isActive, shouldRender = true, prefetch = false, onDe
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const playerReadyRef = useRef(false)
   const activeStateRef = useRef(isActive)
-  const listeningTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+  const listeningIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const errorDetectedRef = useRef(false)
   const blockTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const iframeId = useMemo(() => `short-${item.youtube.video_id}`, [item.youtube.video_id])
@@ -53,6 +53,7 @@ function ShortCard({ item, isActive, shouldRender = true, prefetch = false, onDe
       `${YT_BASE_ORIGIN}/embed/${item.youtube.video_id}` +
       `?autoplay=1&loop=1&mute=1&playlist=${item.youtube.video_id}` +
       '&controls=0&playsinline=1&rel=0&enablejsapi=1' +
+      '&modestbranding=1&iv_load_policy=3&fs=0&cc_load_policy=0' +
       originParam
     )
   }, [item.youtube.video_id, playerOrigin])
@@ -156,6 +157,8 @@ function ShortCard({ item, isActive, shouldRender = true, prefetch = false, onDe
         playerReadyRef.current = true
         errorDetectedRef.current = false
         if (blockTimeoutRef.current) { clearTimeout(blockTimeoutRef.current); blockTimeoutRef.current = null }
+        if (listeningIntervalRef.current) { clearInterval(listeningIntervalRef.current); listeningIntervalRef.current = null }
+        postPlayerMessage('setPlaybackQuality', ['hd720'])
         syncPlayback(activeStateRef.current)
         if (!globalMuted) {
           postPlayerMessage('unMute')
@@ -175,8 +178,7 @@ function ShortCard({ item, isActive, shouldRender = true, prefetch = false, onDe
     window.addEventListener('message', handleMessage)
     return () => {
       window.removeEventListener('message', handleMessage)
-      listeningTimersRef.current.forEach(clearTimeout)
-      listeningTimersRef.current = []
+      if (listeningIntervalRef.current) { clearInterval(listeningIntervalRef.current); listeningIntervalRef.current = null }
       if (blockTimeoutRef.current) { clearTimeout(blockTimeoutRef.current); blockTimeoutRef.current = null }
       playerReadyRef.current = false
       errorDetectedRef.current = false
@@ -188,8 +190,7 @@ function ShortCard({ item, isActive, shouldRender = true, prefetch = false, onDe
     if (!iframe) return
 
     // Clear any previous retry timers
-    listeningTimersRef.current.forEach(clearTimeout)
-    listeningTimersRef.current = []
+    if (listeningIntervalRef.current) { clearInterval(listeningIntervalRef.current); listeningIntervalRef.current = null }
     if (blockTimeoutRef.current) { clearTimeout(blockTimeoutRef.current); blockTimeoutRef.current = null }
 
     const sendListening = () => {
@@ -199,20 +200,25 @@ function ShortCard({ item, isActive, shouldRender = true, prefetch = false, onDe
       }), YT_BASE_ORIGIN)
     }
 
-    // Send immediately, then retry — YouTube's player script needs time to initialize
+    // Send immediately, then poll every 100ms until player is ready (cleared on onReady or after 3s)
     sendListening()
-    listeningTimersRef.current.push(
-      setTimeout(sendListening, 250),
-      setTimeout(sendListening, 750),
-      setTimeout(sendListening, 2000),
-    )
+    listeningIntervalRef.current = setInterval(() => {
+      if (playerReadyRef.current) {
+        if (listeningIntervalRef.current) { clearInterval(listeningIntervalRef.current); listeningIntervalRef.current = null }
+        return
+      }
+      sendListening()
+    }, 100)
+    setTimeout(() => {
+      if (listeningIntervalRef.current) { clearInterval(listeningIntervalRef.current); listeningIntervalRef.current = null }
+    }, 3000)
 
     // Timeout: if player never becomes ready and card is active, video is likely blocked
     blockTimeoutRef.current = setTimeout(() => {
       if (!playerReadyRef.current && !errorDetectedRef.current && activeStateRef.current) {
         handleVideoBlocked()
       }
-    }, 8000)
+    }, 5000)
   }, [iframeId, handleVideoBlocked])
 
   if (isMp4 && item.video?.type === 'mp4') {
@@ -334,7 +340,11 @@ function ShortCard({ item, isActive, shouldRender = true, prefetch = false, onDe
 
   return (
     <div className="short-card">
-      <div className="video-container" style={{ background: '#000' }}>
+      <div className="video-container" style={{
+        background: item.youtube.thumbnail
+          ? `url(${item.youtube.thumbnail}) center/cover no-repeat #000`
+          : '#000',
+      }}>
         <iframe
           ref={iframeRef}
           id={iframeId}
@@ -343,8 +353,8 @@ function ShortCard({ item, isActive, shouldRender = true, prefetch = false, onDe
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
           allowFullScreen
           className="video-iframe"
-          style={{ pointerEvents: 'auto', clipPath: 'inset(2% 0 0 0)', top: '3%' }}
-          loading={isActive ? 'eager' : 'lazy'}
+          style={{ pointerEvents: 'auto', transform: 'translateY(-1.5%)', top: '3%' }}
+          loading="eager"
           onLoad={handleIframeLoad}
         />
       </div>

@@ -195,9 +195,6 @@ class KalshiService:
             m.get("event_ticker", "") for m in markets if m.get("event_ticker")
         ))
 
-        def is_fallback(url: str) -> bool:
-            return "structured_icons/" in url
-
         def to_full_url(path: str) -> str:
             if not path:
                 return ""
@@ -210,20 +207,20 @@ class KalshiService:
                 metadata = await self.get_event_metadata(event_ticker)
 
                 img = to_full_url(metadata.get("image_url", ""))
-                if img and not is_fallback(img):
+                if img:
                     print(f"[series_image] Found image for {series_ticker} via {event_ticker}: {img}")
                     _series_image_cache[series_ticker] = img
                     return img
 
                 img = to_full_url(metadata.get("featured_image_url", ""))
-                if img and not is_fallback(img):
+                if img:
                     print(f"[series_image] Found featured image for {series_ticker} via {event_ticker}: {img}")
                     _series_image_cache[series_ticker] = img
                     return img
 
                 for md in metadata.get("market_details", []):
                     img = to_full_url(md.get("image_url", ""))
-                    if img and not is_fallback(img):
+                    if img:
                         print(f"[series_image] Found market detail image for {series_ticker} via {event_ticker}: {img}")
                         _series_image_cache[series_ticker] = img
                         return img
@@ -255,53 +252,38 @@ class KalshiService:
                 return f"https://kalshi.com{path}"
             return path
 
-        def is_fallback(url: str) -> bool:
-            return "structured_icons/" in url
-
-        best_fallback = ""
-
         img = to_full_url(event_metadata.get("image_url", ""))
-        if img and not is_fallback(img):
+        if img:
             return img
-        if img and not best_fallback:
-            best_fallback = img
 
-        first_non_fallback_market_image = ""
+        first_market_image = ""
         for md in event_metadata.get("market_details", []):
             img = to_full_url(md.get("image_url", ""))
             if not img:
                 continue
-            if is_fallback(img):
-                if not best_fallback:
-                    best_fallback = img
-                continue
-            if not first_non_fallback_market_image:
-                first_non_fallback_market_image = img
+            if not first_market_image:
+                first_market_image = img
             if md.get("market_ticker") == market_ticker:
                 return img
 
         img = to_full_url(event_metadata.get("featured_image_url", ""))
-        if img and not is_fallback(img):
+        if img:
             return img
-        if img and not best_fallback:
-            best_fallback = img
 
-        if first_non_fallback_market_image:
-            return first_non_fallback_market_image
+        if first_market_image:
+            return first_market_image
 
         if event:
             img = to_full_url(event.get("image_url", ""))
-            if img and not is_fallback(img):
+            if img:
                 return img
-            if img and not best_fallback:
-                best_fallback = img
 
         if series_ticker:
             img = await self.find_series_image(series_ticker)
             if img:
                 return img
 
-        return best_fallback
+        return ""
 
     async def get_candlesticks(
         self,

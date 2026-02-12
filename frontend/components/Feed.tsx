@@ -10,6 +10,7 @@ interface FeedProps {
   onNearEnd?: (currentIndex: number) => void
   onDelete?: (itemId: string) => void
   paused?: boolean
+  preloadWindow?: number
 }
 
 export interface FeedRef {
@@ -17,7 +18,7 @@ export interface FeedRef {
   scrollToPrev: () => void
 }
 
-const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCurrentItemChange, onNearEnd, onDelete, paused }, ref) {
+const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCurrentItemChange, onNearEnd, onDelete, paused, preloadWindow = 1 }, ref) {
   const containerRef = useRef<HTMLDivElement>(null)
   const activeIndexRef = useRef(0)
   const onCurrentItemChangeRef = useRef(onCurrentItemChange)
@@ -116,8 +117,8 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
             key={item.youtube.video_id || item.id}
             item={item}
             isActive={index === safeActiveIndex && !paused}
-            shouldRender={Math.abs(distance) <= 1}
-            prefetch={distance === 2}
+            shouldRender={Math.abs(distance) <= preloadWindow}
+            prefetch={distance === preloadWindow + 1}
             onDelete={onDelete}
           />
         )
@@ -127,5 +128,5 @@ const FeedComponent = forwardRef<FeedRef, FeedProps>(function Feed({ items, onCu
 })
 
 export default memo(FeedComponent, (prev, next) => {
-  return prev.items === next.items && prev.onCurrentItemChange === next.onCurrentItemChange && prev.onNearEnd === next.onNearEnd && prev.onDelete === next.onDelete && prev.paused === next.paused
+  return prev.items === next.items && prev.onCurrentItemChange === next.onCurrentItemChange && prev.onNearEnd === next.onNearEnd && prev.onDelete === next.onDelete && prev.paused === next.paused && prev.preloadWindow === next.preloadWindow
 })

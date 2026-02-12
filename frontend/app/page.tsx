@@ -563,7 +563,7 @@ export default function Home() {
 
   // Phone content shared by both tutorial and feed views
   const phoneContent = feedItems.length > 0 ? (
-    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} onNearEnd={(idx) => requestMore(idx)} onDelete={removeItem} paused={overlayActive} />
+    <Feed ref={feedRef} items={feedItems} onCurrentItemChange={handleCurrentItemChange} onNearEnd={(idx) => requestMore(idx)} onDelete={removeItem} paused={overlayActive} preloadWindow={30} />
   ) : (
     <div className="flex flex-col items-center justify-center h-full bg-black gap-3 p-4">
       <div className="text-white/30 text-sm">
