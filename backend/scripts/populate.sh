@@ -12,6 +12,23 @@ API_URL="${API_URL:-http://localhost:8000}"
 MAX_VIDEOS="${1:-50}"
 
 QUERIES=(
+  # ── Funny / Viral / Entertaining ──
+  "conspiracy theory shorts funny"
+  "hot takes that make no sense shorts"
+  "unpopular opinions shorts"
+  "gen z vs millennials shorts"
+  "why is everything so expensive shorts"
+  "crypto bros be like shorts"
+  "elon musk meme shorts"
+  "stock market crash reaction shorts"
+  "inflation hitting different shorts"
+  "ai replacing jobs funny shorts"
+  "bitcoin to the moon shorts"
+  "wall street bets shorts"
+  "trader reacts shorts"
+  "financial advice from tiktok shorts"
+  "this economy is cooked shorts"
+
   # # ── NFL / Super Bowl ──
   # "nfl highlights today"
   # "super bowl shorts"
@@ -30,7 +47,7 @@ QUERIES=(
   # "premier league highlights shorts"
   # "champions league goals shorts"
 
-  # ── Tech / AI ──
+  # # ── Tech / AI ──
   # "ai news today shorts"
   # "chatgpt news shorts"
   # "openai news shorts"
@@ -43,7 +60,6 @@ QUERIES=(
   # # ── Music / Entertainment ──
   # "drake new music shorts"
   # "kendrick lamar shorts"
-  # # ── Music / Entertainment ──
   # "travis scott shorts"
   # "kanye west news shorts"
   # "hip hop news today shorts"
@@ -67,43 +83,25 @@ QUERIES=(
   # "breaking news shorts"
 
   # # ── Economy / Business ──
+  # "recession news shorts"
+  # "elon musk news shorts"
+  # "billionaire news shorts"
   # "inflation news today shorts"
   # "fed rate decision shorts"
-  "recession news shorts"
-  "elon musk news shorts"
-  "billionaire news shorts"
 
-  # ── Weather / Climate ──
-  "extreme weather shorts"
-  "hurricane news shorts"
-  "wildfire news shorts"
-  "weather report shorts"
-  "snowfall shorts"
+  # # ── Weather / Climate ──
+  # "extreme weather shorts"
+  # "hurricane news shorts"
+  # "wildfire news shorts"
+  # "weather report shorts"
+  # "snowfall shorts"
 
-  # ── Gaming / Internet Culture ──
-  "gaming news today shorts"
-  "fortnite news shorts"
-  "twitch drama shorts"
-  "youtube drama shorts"
-  "internet drama shorts"
-
-    # ── NFL / Super Bowl ──
-  "nfl highlights today"
-  "super bowl shorts"
-  "nfl best plays this week"
-  "nfl game winning plays"
-
-  # ── NBA ──
-  "nba highlights tonight"
-  "nba best dunks today"
-  "nba buzzer beaters"
-  "nba playoffs shorts"
-
-  # ── MLB / NHL / Soccer ──
-  "mlb highlights today"
-  "nhl highlights today"
-  "premier league highlights shorts"
-  "champions league goals shorts"
+  # # ── Gaming / Internet Culture ──
+  # "gaming news today shorts"
+  # "fortnite news shorts"
+  # "twitch drama shorts"
+  # "youtube drama shorts"
+  # "internet drama shorts"
 )
 
 echo "Populating feed pool via $API_URL..."

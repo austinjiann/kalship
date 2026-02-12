@@ -1,0 +1,76 @@
+steps:
+  # ── Backend ──
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:latest'
+      - './backend'
+    id: 'build-backend'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend']
+    id: 'push-backend'
+    waitFor: ['build-backend']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_BACKEND_SERVICE}'
+      - '--image'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+    id: 'deploy-backend'
+    waitFor: ['push-backend']
+
+  # ── Frontend ──
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:latest'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_API_URL=${_BACKEND_URL}'
+      - './frontend'
+    id: 'build-frontend'
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '--all-tags', '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend']
+    id: 'push-frontend'
+    waitFor: ['build-frontend']
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_FRONTEND_SERVICE}'
+      - '--image'
+      - '${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}'
+      - '--region'
+      - '${_REGION}'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+    id: 'deploy-frontend'
+    waitFor: ['push-frontend']
+
+substitutions:
+  _REGION: us-central1
+  _REPO: qhacks
+  _BACKEND_SERVICE: backend
+  _FRONTEND_SERVICE: frontend
+  _BACKEND_URL: https://backend-uetfhulm5q-uc.a.run.app
+
+options:
+  logging: CLOUD_LOGGING_ONLY
