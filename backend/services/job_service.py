@@ -16,6 +16,7 @@ from services.firestore_service import FirestoreService
 from services.vertex_service import VertexService
 from utils.env import settings
 from utils.gemini_prompt_builder import create_first_image_prompt
+from utils.prompt_enhancer import sanitize_for_content_policy
 from utils.veo_prompt_builder import create_video_prompt
 
 logger = logging.getLogger("job_service")
@@ -242,6 +243,51 @@ class JobService:
         print(f"[{jid}] [pipeline] 6. Job queued — returning job_id to frontend", flush=True)
         return job_id
 
+    @staticmethod
+    def _is_content_policy_error(error_text: str) -> bool:
+        """Check if a Veo error is a content policy / usage guideline violation."""
+        if not error_text:
+            return False
+        lower = error_text.lower()
+        return "usage guidelines" in lower or "could not be submitted" in lower or "violate" in lower
+
+    async def _submit_and_poll_veo(
+        self,
+        jid: str,
+        veo_prompt: str,
+        source_image: bytes,
+    ) -> tuple[str, str | None]:
+        """Submit to Veo and poll until done.
+
+        Returns (status, video_uri_or_error):
+          - ("done", video_uri)
+          - ("error", error_message)
+          - ("content_policy", error_message)
+        """
+        operation = await self.vertex_service.generate_video_content(
+            prompt=veo_prompt,
+            image_data=source_image,
+        )
+        print(f"[{jid}] [pipeline] ↳ Veo operation started: {operation.name}", flush=True)
+
+        max_polls = 60  # ~5 minutes at 5s intervals
+        for poll_num in range(1, max_polls + 1):
+            await asyncio.sleep(5)
+            print(f"[{jid}] [pipeline] 9a. Polling Veo (attempt {poll_num}/{max_polls})...", flush=True)
+            result = await self.vertex_service.get_video_status_by_name(operation.name)
+            print(f"[{jid}] [pipeline] ↳ Veo status: {result.status}", flush=True)
+
+            if result.status == "done":
+                return "done", result.video_url
+
+            if result.status == "error":
+                error_msg = result.error or "Unknown Veo error"
+                if self._is_content_policy_error(error_msg):
+                    return "content_policy", error_msg
+                return "error", error_msg
+
+        return "error", f"Veo timed out after {max_polls * 5} seconds"
+
     async def process_video_job(self, job_id: str, job_data: dict):
         #  Gemini starting frame -> Veo video
         jid = job_id[:8]
@@ -294,15 +340,9 @@ class JobService:
                 outcome=outcome,
                 original_trade_link=original_trade_link,
             )
-            operation = await self.vertex_service.generate_video_content(
-                prompt=veo_prompt,
-                image_data=source_image,
-            )
-            print(f"[{jid}] [pipeline] ↳ Veo operation started: {operation.name}", flush=True)
 
             await self._save_job(job_id, {
                 "status": "processing",
-                "operation_name": operation.name,
                 "job_start_time": existing_job.get("job_start_time") if existing_job else start_time,
                 "title": title,
                 "outcome": outcome,
@@ -313,70 +353,78 @@ class JobService:
             })
             print(f"[{jid}] [pipeline] ↳ Job saved with status=processing, polling Veo until done...", flush=True)
 
-            # Poll Veo until video is ready (or error/timeout)
-            max_polls = 60  # ~5 minutes at 5s intervals
-            for poll_num in range(1, max_polls + 1):
-                await asyncio.sleep(5)
-                print(f"[{jid}] [pipeline] 9a. Polling Veo (attempt {poll_num}/{max_polls})...", flush=True)
-                result = await self.vertex_service.get_video_status_by_name(operation.name)
-                print(f"[{jid}] [pipeline] ↳ Veo status: {result.status}", flush=True)
+            status, result_value = await self._submit_and_poll_veo(jid, veo_prompt, source_image)
 
-                if result.status == "done":
-                    video_uri = result.video_url
-                    video_url = self._generate_signed_url(video_uri) if video_uri else None
-                    print(f"[{jid}] [pipeline] 9b. Veo DONE — video_url={video_url}", flush=True)
+            # On content policy violation, sanitize prompt and retry once
+            if status == "content_policy":
+                print(f"[{jid}] [pipeline] ↳ Content policy violation, sanitizing prompt and retrying...", flush=True)
+                safe_title, safe_outcome = await sanitize_for_content_policy(title, outcome)
+                print(f"[{jid}] [pipeline] ↳ Sanitized: \"{safe_title}\" / \"{safe_outcome}\"", flush=True)
 
-                    await self._save_job(job_id, {
-                        "status": "done",
-                        "video_uri": video_uri,
+                # Regenerate starting frame with sanitized prompt
+                print(f"[{jid}] [pipeline] ↳ Regenerating starting frame with sanitized prompt...", flush=True)
+                safe_image_prompt = create_first_image_prompt(
+                    title=safe_title,
+                    outcome=safe_outcome,
+                    original_trade_link=original_trade_link,
+                )
+                safe_source_image = await self.vertex_service.generate_starting_frame(safe_image_prompt)
+                if safe_source_image:
+                    source_image = safe_source_image
+                    print(f"[{jid}] [pipeline] ↳ New starting frame generated ({len(source_image)} bytes)", flush=True)
+                    if self.bucket:
+                        image_uri = await asyncio.to_thread(self._upload_image_sync, job_id, 2, source_image)
+                else:
+                    print(f"[{jid}] [pipeline] ↳ Sanitized image gen failed, reusing original image", flush=True)
+
+                safe_veo_prompt = create_video_prompt(
+                    title=safe_title,
+                    outcome=safe_outcome,
+                    original_trade_link=original_trade_link,
+                )
+                print(f"[{jid}] [pipeline] 8b. Retrying Veo with sanitized prompt...", flush=True)
+                status, result_value = await self._submit_and_poll_veo(jid, safe_veo_prompt, source_image)
+
+            if status == "done":
+                video_uri = result_value
+                video_url = self._generate_signed_url(video_uri) if video_uri else None
+                print(f"[{jid}] [pipeline] 9b. Veo DONE — video_url={video_url}", flush=True)
+
+                await self._save_job(job_id, {
+                    "status": "done",
+                    "video_uri": video_uri,
+                    "video_url": video_url,
+                    "job_start_time": existing_job.get("job_start_time") if existing_job else start_time,
+                    "job_end_time": datetime.now().isoformat(),
+                    "title": title,
+                    "outcome": outcome,
+                    "original_trade_link": original_trade_link,
+                    "image_uri": image_uri,
+                    "kalshi": job_data.get("kalshi"),
+                    "trade_side": job_data.get("trade_side"),
+                })
+
+                try:
+                    print(f"[{jid}] [pipeline] 9c. Storing in Firestore generated_videos...", flush=True)
+                    await self.firestore_service.store_generated_video(job_id, {
                         "video_url": video_url,
-                        "job_start_time": existing_job.get("job_start_time") if existing_job else start_time,
-                        "job_end_time": datetime.now().isoformat(),
                         "title": title,
-                        "outcome": outcome,
-                        "original_trade_link": original_trade_link,
-                        "image_uri": image_uri,
-                        "operation_name": operation.name,
-                        "kalshi": job_data.get("kalshi"),
-                        "trade_side": job_data.get("trade_side"),
+                        "kalshi": job_data.get("kalshi", []),
+                        "trade_side": job_data.get("trade_side", ""),
                     })
-
-                    try:
-                        print(f"[{jid}] [pipeline] 9c. Storing in Firestore generated_videos...", flush=True)
-                        await self.firestore_service.store_generated_video(job_id, {
-                            "video_url": video_url,
-                            "title": title,
-                            "kalshi": job_data.get("kalshi", []),
-                            "trade_side": job_data.get("trade_side", ""),
-                        })
-                        print(f"[{jid}] [pipeline] 9d. Stored in Firestore — ready for frontend poll!", flush=True)
-                    except Exception as fs_exc:
-                        print(f"[{jid}] [pipeline] ✗ Failed to store in Firestore: {fs_exc}", flush=True)
-                    break
-
-                if result.status == "error":
-                    print(f"[{jid}] [pipeline] ✗ Veo ERROR: {result.error}", flush=True)
-                    await self._save_job(job_id, {
-                        "status": "error",
-                        "error": result.error,
-                        "job_start_time": existing_job.get("job_start_time") if existing_job else start_time,
-                        "title": title,
-                        "outcome": outcome,
-                        "original_trade_link": original_trade_link,
-                        "operation_name": operation.name,
-                    })
-                    break
+                    print(f"[{jid}] [pipeline] 9d. Stored in Firestore — ready for frontend poll!", flush=True)
+                except Exception as fs_exc:
+                    print(f"[{jid}] [pipeline] ✗ Failed to store in Firestore: {fs_exc}", flush=True)
             else:
-                # Timed out after all polls
-                print(f"[{jid}] [pipeline] ✗ Veo TIMEOUT after {max_polls * 5}s", flush=True)
+                error_msg = result_value or "Unknown error"
+                print(f"[{jid}] [pipeline] ✗ Veo ERROR: {error_msg}", flush=True)
                 await self._save_job(job_id, {
                     "status": "error",
-                    "error": f"Veo timed out after {max_polls * 5} seconds",
+                    "error": error_msg,
                     "job_start_time": existing_job.get("job_start_time") if existing_job else start_time,
                     "title": title,
                     "outcome": outcome,
                     "original_trade_link": original_trade_link,
-                    "operation_name": operation.name,
                 })
 
         except Exception as exc:

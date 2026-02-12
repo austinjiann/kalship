@@ -33,6 +33,11 @@ class Pool(APIController):
             })
         return json(feed)
 
+    @get("/generated/pending")
+    async def get_pending_generated(self):
+        items = await self.firestore_service.get_unconsumed_generated_videos()
+        return json(items)
+
     @post("/generated/{job_id}/consume")
     async def consume_generated(self, job_id: str):
         await self.firestore_service.mark_consumed(job_id)

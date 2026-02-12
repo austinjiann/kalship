@@ -410,11 +410,18 @@ export default function Home() {
   const chartStatus = expandedMarket ? chartStatusByTicker[expandedMarket.ticker] : undefined
   const graphStatus: 'ready' | 'loading' | 'empty' = (() => {
     if (!expandedMarket) return 'ready'
+    // PriceChart has definitively reported its status
     if (chartStatus === 'ok') return 'ready'
     if (chartStatus === 'empty') return 'empty'
-    if (chartStatus === 'error') return 'loading'
-    if (historyLoadingByTicker[expandedMarket.ticker]) return 'loading'
-    if (!historyEntryExists) return 'loading'
+    if (chartStatus === 'error') {
+      return resolvedPriceHistory && resolvedPriceHistory.length > 0 ? 'ready' : 'empty'
+    }
+    // chartStatus undefined — PriceChart hasn't reported yet
+    // If we have seed data, PriceChart will render it on the next frame
+    if (resolvedPriceHistory && resolvedPriceHistory.length > 0) return 'ready'
+    // Prefetch completed but returned nothing — no data exists for this market
+    if (historyEntryExists) return 'empty'
+    // Still waiting for any data
     return 'loading'
   })()
 

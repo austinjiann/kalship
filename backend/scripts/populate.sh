@@ -36,39 +36,39 @@ QUERIES=(
   # "openai news shorts"
   # "nvidia news today shorts"
   # "apple news today shorts"
-  "tesla news today shorts"
-  "tech news today shorts"
-  "silicon valley news shorts"
+  # "tesla news today shorts"
+  # "tech news today shorts"
+  # "silicon valley news shorts"
 
-  # ── Music / Entertainment ──
-  "drake new music shorts"
-  "kendrick lamar shorts"
-  # ── Music / Entertainment ──
-  "travis scott shorts"
-  "kanye west news shorts"
-  "hip hop news today shorts"
-  "rap beef shorts"
-  "new music friday shorts"
-  "grammys shorts"
-  "music industry news shorts"
+  # # ── Music / Entertainment ──
+  # "drake new music shorts"
+  # "kendrick lamar shorts"
+  # # ── Music / Entertainment ──
+  # "travis scott shorts"
+  # "kanye west news shorts"
+  # "hip hop news today shorts"
+  # "rap beef shorts"
+  # "new music friday shorts"
+  # "grammys shorts"
+  # "music industry news shorts"
 
-  # ── Pop Culture / Celebrities ──
-  "celebrity news today shorts"
-  "trending news today shorts"
-  "viral moments shorts"
-  "reality tv shorts"
-  "movie trailer shorts"
+  # # ── Pop Culture / Celebrities ──
+  # "celebrity news today shorts"
+  # "trending news today shorts"
+  # "viral moments shorts"
+  # "reality tv shorts"
+  # "movie trailer shorts"
 
-  # ── Politics / World Events ──
-  "trump news today shorts"
-  "election 2026 shorts"
-  "politics today shorts"
-  "world news today shorts"
-  "breaking news shorts"
+  # # ── Politics / World Events ──
+  # "trump news today shorts"
+  # "election 2026 shorts"
+  # "politics today shorts"
+  # "world news today shorts"
+  # "breaking news shorts"
 
-  # ── Economy / Business ──
-  "inflation news today shorts"
-  "fed rate decision shorts"
+  # # ── Economy / Business ──
+  # "inflation news today shorts"
+  # "fed rate decision shorts"
   "recession news shorts"
   "elon musk news shorts"
   "billionaire news shorts"

@@ -281,12 +281,13 @@ function PriceChartInner({
 
     const notifyReady = (payload: PriceChartReadyPayload) => {
       if (cancelled) return
+      // Never downgrade from 'ok' — chart already has valid data displayed
+      if (lastStatus === 'ok' && payload.status !== 'ok') return
       const improvedOk =
         payload.status === 'ok' &&
         (payload.spanSeconds > bestSpanSeconds ||
           (payload.spanSeconds === bestSpanSeconds && payload.points > bestPoints))
-      const statusChanged = payload.status !== lastStatus
-      if (readyNotified && !improvedOk && !(statusChanged && payload.status !== 'ok')) {
+      if (readyNotified && !improvedOk) {
         return
       }
       if (payload.status === 'ok') {

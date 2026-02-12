@@ -103,7 +103,10 @@ class KalshiService:
         for attempt in range(4):
             async with self._kalshi_semaphore:
                 assert self._session is not None
-                async with self._session.get(url, params=params, headers=headers) as response:
+                async with self._session.get(
+                    url, params=params, headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as response:
                     if response.status == 429 and attempt < 3:
                         pass  # will sleep after releasing semaphore
                     else:
@@ -301,7 +304,7 @@ class KalshiService:
             if img:
                 return img
 
-        return ""
+        return best_fallback
 
     async def get_candlesticks(
         self,

@@ -97,8 +97,12 @@ export function useVideoQueue() {
               console.log(`[pipeline] ↳ Already in feed, skipping`)
               return prev
             }
-            console.log(`[pipeline] 11. Video injected at front of feed!`)
-            return [injectedItem, ...prev]
+            // Insert right after the current video so it's the NEXT reel
+            const insertAt = currentIndexRef.current + 1
+            const next = [...prev]
+            next.splice(insertAt, 0, injectedItem)
+            console.log(`[pipeline] 11. Video injected after index ${currentIndexRef.current}`)
+            return next
           })
 
           // Mark as consumed via backend
