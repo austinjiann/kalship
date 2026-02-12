@@ -1,9 +1,7 @@
 import asyncio
 import random
 from datetime import datetime, timezone
-
 import aiohttp
-
 from services.feed_service import FeedService
 from services.firestore_service import FirestoreService
 from services.youtube_service import YoutubeService
@@ -15,10 +13,6 @@ SEARCH_QUERIES = [
     "crypto market today shorts",
     "ethereum news today shorts",
     "xrp news today shorts",
-    # Financials / Indices
-    "stock market today shorts",
-    "nasdaq today shorts",
-    "dow jones today shorts",
     # Politics
     "trump news today shorts",
     "election 2026 shorts",
@@ -77,8 +71,6 @@ class CrawlerService:
                 if vid:
                     video_ids.append(vid)
 
-            # Second-pass: verify embeddability via videos API
-            # (search filter doesn't catch Content ID domain blocks)
             if video_ids:
                 video_ids = await self.youtube_service.batch_check_embeddable(video_ids)
 

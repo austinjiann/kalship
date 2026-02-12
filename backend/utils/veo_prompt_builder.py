@@ -87,7 +87,6 @@ def _domain_specific_rules(title: str, outcome: str) -> str:
 
 
 def _domain_palette(title: str, outcome: str) -> str:
-    """Return a detailed color palette and texture description for this domain."""
     text = f"{title} {outcome}".lower()
 
     if any(kw in text for kw in ("football", "nfl", "super bowl", "basketball", "nba", "soccer", "fifa", "baseball", "mlb", "hockey", "nhl")):
@@ -126,7 +125,6 @@ ATMOSPHERE: The charged air of a pivotal moment — the second before everything
 
 
 def _domain_animation(title: str, outcome: str) -> str:
-    """Return detailed animation and camera direction for this domain."""
     text = f"{title} {outcome}".lower()
 
     if any(kw in text for kw in ("football", "nfl", "super bowl", "basketball", "nba", "soccer", "fifa", "baseball", "mlb", "hockey", "nhl")):
@@ -166,13 +164,8 @@ IMPLIED SOUND: The specific ambient soundscape of the environment building to th
 
 def create_video_prompt(
     title: str,
-    outcome: str,
-    original_trade_link: str,
+    outcome: str
 ) -> str:
-    """
-    Build a high-quality Veo prompt for an 8-second vertical clip.
-    Rich with visual detail, textures, color palettes, animation direction, and atmosphere.
-    """
     domain_rules = _domain_specific_rules(title=title, outcome=outcome)
     palette = _domain_palette(title=title, outcome=outcome)
     animation = _domain_animation(title=title, outcome=outcome)

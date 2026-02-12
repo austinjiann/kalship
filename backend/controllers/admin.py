@@ -1,6 +1,5 @@
 from blacksheep import json
 from blacksheep.server.controllers import APIController, get, post
-
 from services.crawler_service import CrawlerService
 from services.firestore_service import FirestoreService
 

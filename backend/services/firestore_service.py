@@ -1,7 +1,6 @@
 import random
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-
 import firebase_admin
 from firebase_admin import credentials, firestore_async
 from google.cloud.firestore_v1 import AsyncClient
@@ -21,6 +20,7 @@ class FirestoreService:
         self.db: AsyncClient = firestore_async.client()
 
     # ── feed_pool CRUD ──
+    # round robin ordering
 
     async def get_random_feed_items(self, count: int = 10, exclude_ids: Optional[set[str]] = None) -> list[dict]:
         active_items = await self._get_all_active_ids_with_channel()
@@ -29,16 +29,13 @@ class FirestoreService:
         if not active_items:
             return []
 
-        # Group by channel for diversity sampling
         by_channel: dict[str, list[str]] = {}
         for vid, channel in active_items:
             by_channel.setdefault(channel, []).append(vid)
 
-        # Shuffle within each channel group
         for ids in by_channel.values():
             random.shuffle(ids)
 
-        # Round-robin across channels
         sampled: list[str] = []
         channels = list(by_channel.keys())
         random.shuffle(channels)
@@ -58,7 +55,6 @@ class FirestoreService:
             return []
 
         items: list[dict] = []
-        # Firestore 'in' queries max 30 per batch
         for i in range(0, len(sampled), 30):
             batch_ids = sampled[i : i + 30]
             docs = await self.db.collection("feed_pool").where("__name__", "in",
@@ -69,7 +65,6 @@ class FirestoreService:
                 data["_doc_id"] = doc.id
                 items.append(data)
 
-        # Preserve the round-robin ordering
         order = {vid: idx for idx, vid in enumerate(sampled)}
         items.sort(key=lambda d: order.get(d.get("_doc_id", ""), len(sampled)))
         return items
@@ -110,7 +105,6 @@ class FirestoreService:
         return count
 
     async def deactivate_by_keywords(self, match_keywords: list[str]) -> int:
-        """Deactivate all active feed items whose keywords overlap with match_keywords."""
         match_lower = {k.lower() for k in match_keywords}
         query = self.db.collection("feed_pool").where("active", "==", True)
         docs = await query.get()
@@ -176,8 +170,6 @@ class FirestoreService:
         doc = await ref.get()
         return doc.to_dict() if doc.exists else None
 
-    # ── stats ──
-
     async def get_pool_stats(self) -> dict:
         active_ids = await self.get_all_active_video_ids()
         crawler_state = await self.get_crawler_state()
@@ -187,8 +179,6 @@ class FirestoreService:
             "generated_pending": len(unconsumed),
             "crawler": crawler_state,
         }
-
-    # ── list pool items ──
 
     async def list_pool_items(self, limit: int = 50) -> list[dict]:
         query = (

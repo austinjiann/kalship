@@ -1,5 +1,4 @@
 def _scene_direction(title: str, outcome: str) -> str:
-    """Return domain-aware scene direction for the starting frame."""
     text = f"{title} {outcome}".lower()
 
     if any(kw in text for kw in ("football", "nfl", "super bowl", "basketball", "nba", "soccer", "fifa", "baseball", "mlb", "hockey", "nhl", "touchdown", "dunk")):
@@ -48,10 +47,6 @@ def create_first_image_prompt(
     outcome: str,
     original_trade_link: str,
 ) -> str:
-    """
-    Build the first-frame prompt for Gemini image generation.
-    The frame should unambiguously depict the selected Kalshi outcome.
-    """
     scene = _scene_direction(title=title, outcome=outcome)
 
     return f"""Create a single 4K cinematic start frame for an 8-second vertical short video.

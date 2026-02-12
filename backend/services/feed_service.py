@@ -4,14 +4,12 @@ import math
 import re
 import time
 from typing import Optional
-
 from openai import AsyncOpenAI
-
 from services.kalshi_service import KalshiService
 from services.youtube_service import YoutubeService
 from utils.env import settings
 
-# Module-level cache for open Kalshi events (survives across scoped FeedService instances)
+# cache
 _events_cache: list[dict] = []
 _events_cache_ts: float = 0.0
 _EVENTS_CACHE_TTL: float = 300.0  # 5 minutes
@@ -116,11 +114,11 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
             if resolved_series_ticker and market_start_ts is not None:
                 age_hours = (time.time() - market_start_ts) / 3600
                 if age_hours < 24:
-                    interval = 1        # 1-min candles
+                    interval = 1 
                 elif age_hours < 24 * 30:
-                    interval = 60       # 1-hr candles
+                    interval = 60
                 else:
-                    interval = 1440     # 1-day candles
+                    interval = 1440 
                 price_history = await self.kalshi_service.get_candlesticks(
                     resolved_series_ticker,
                     ticker,
@@ -137,7 +135,6 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
         except Exception as e:
             print(f"[candlestick] Failed for {ticker}: {e}")
 
-        # Fallback: generate synthetic history if API returned nothing
         if not price_history and yes_price and yes_price > 0:
             now = int(time.time())
             fallback_start = market_start_ts or (now - 30 * 24 * 3600)
@@ -160,7 +157,6 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
         }
 
     async def _get_cached_events(self) -> list[dict]:
-        """Return cached open events, refreshing if stale (>5 min)."""
         global _events_cache, _events_cache_ts, _events_cache_lock
         if _events_cache_lock is None:
             _events_cache_lock = asyncio.Lock()
@@ -168,7 +164,6 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
         if _events_cache and (now - _events_cache_ts) < _EVENTS_CACHE_TTL:
             return _events_cache
         async with _events_cache_lock:
-            # Double-check after acquiring lock
             now = time.monotonic()
             if _events_cache and (now - _events_cache_ts) < _EVENTS_CACHE_TTL:
                 return _events_cache
@@ -182,7 +177,6 @@ Return JSON only: {{"question": "...", "outcome": "..."}}"""
     async def _match_event_via_openai(
         self, keywords: list[str], events: list[dict]
     ) -> Optional[dict]:
-        """Use GPT-4o-mini to pick the best matching event from a numbered list."""
         if not events:
             return None
 
@@ -217,7 +211,7 @@ Respond with ONLY the number of the best matching event (e.g., "42"). No explana
             match = re.search(r"\d+", answer)
             if not match:
                 return None
-            idx = int(match.group()) - 1  # 1-indexed to 0-indexed
+            idx = int(match.group()) - 1 
             if idx < 0 or idx >= len(events):
                 return None
             return events[idx]
@@ -232,7 +226,6 @@ Respond with ONLY the number of the best matching event (e.g., "42"). No explana
         end_ts: int,
         num_points: int = 80,
     ) -> list[dict]:
-        """Generate synthetic price history for markets without candlestick data."""
         if end_ts <= start_ts or center_price <= 0:
             return []
         step = (end_ts - start_ts) / max(1, num_points - 1)
@@ -246,7 +239,6 @@ Respond with ONLY the number of the best matching event (e.g., "42"). No explana
 
     @staticmethod
     def _extract_open_markets(event: dict) -> list[dict]:
-        """Extract nested open markets from an event dict."""
         markets = event.get("markets", [])
         if not markets:
             return []
@@ -305,7 +297,6 @@ Respond with ONLY the number of the best matching event (e.g., "42"). No explana
                     "keywords": keywords,
                 }
 
-        # ── Fallback: semantic matching across all open events ──
         print(f"[{video_id}] No series match, trying semantic fallback...")
         try:
             all_events = await self._get_cached_events()
@@ -424,7 +415,6 @@ Give your quick take on this trade. Be casual and fun."""
             end_ts=end_ts,
         )
         if not result:
-            # Fetch current price and generate synthetic data
             try:
                 market = await self.kalshi_service.get_market(ticker)
                 price = self.kalshi_service.to_cents(

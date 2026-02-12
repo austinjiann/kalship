@@ -1,5 +1,4 @@
 import logging
-
 from google import genai
 from google.genai.types import (
     GenerateImagesConfig,
@@ -12,9 +11,7 @@ from utils.env import settings
 
 logger = logging.getLogger("vertex_service")
 
-
 def _infer_mime_type(image_bytes: bytes) -> str:
-    """Best-effort image MIME sniffing for Gemini/Veo inputs."""
     if image_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
         return "image/png"
     if image_bytes.startswith(b"\xff\xd8\xff"):
@@ -36,7 +33,6 @@ class VertexService:
         logger.info(f"VertexService initialized, output bucket: {self.bucket_name}")
 
     async def generate_starting_frame(self, prompt: str) -> bytes | None:
-        """Generate a starting frame image using Gemini Imagen."""
         logger.info("Generating starting frame via Imagen...")
         try:
             response = self.client.models.generate_images(
@@ -99,7 +95,6 @@ class VertexService:
         return operation
 
     async def get_video_status_by_name(self, operation_name: str) -> JobStatus:
-        """Get video status by operation name (avoids serialization)"""
         logger.debug(f"get_video_status_by_name: Polling operation {operation_name}")
         operation = GenerateVideosOperation(name=operation_name)
         operation = self.client.operations.get(operation)

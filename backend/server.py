@@ -1,7 +1,6 @@
 import os
 from utils.env import settings
 
-# Export credentials to os.environ so Google Cloud clients (GCS, Vertex AI) can find them
 if settings.GOOGLE_APPLICATION_CREDENTIALS:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = settings.GOOGLE_APPLICATION_CREDENTIALS
 

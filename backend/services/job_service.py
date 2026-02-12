@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-
 import traceback
 import uuid
 from datetime import datetime
@@ -45,7 +44,6 @@ def _looks_like_image(data: bytes) -> bool:
 
 
 async def fetch_image_from_url(url: str) -> Optional[bytes]:
-    """Fetch image bytes from URL."""
     parsed = urlparse((url or "").strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return None
@@ -111,7 +109,6 @@ class JobService:
         return f"images/{job_id}/image{image_num}.png"
 
     def _upload_image_sync(self, job_id: str, image_num: int, image_data: bytes) -> str:
-        """Upload an image to GCS and return the gs:// URI."""
         if not self.bucket:
             logger.warning(f"_upload_image_sync: No bucket configured, cannot save image")
             return ""
@@ -247,12 +244,7 @@ class JobService:
         veo_prompt: str,
         source_image: bytes,
     ) -> tuple[str, str | None]:
-        """Submit to Veo and poll until done.
-
-        Returns (status, video_uri_or_error):
-          - ("done", video_uri)
-          - ("error", error_message)
-        """
+        # submit to veo
         operation = await self.vertex_service.generate_video_content(
             prompt=veo_prompt,
             image_data=source_image,
@@ -275,7 +267,6 @@ class JobService:
         return "error", f"Veo timed out after {max_polls * 5} seconds"
 
     async def process_video_job(self, job_id: str, job_data: dict):
-        #  Detect real people → scrape photo → generic prompt → Veo video
         jid = job_id[:8]
         start_time = datetime.now().isoformat()
         existing_job = await self._load_job(job_id)
@@ -288,12 +279,10 @@ class JobService:
                 raise ValueError("outcome is required")
             original_trade_link = job_data["original_trade_link"]
             source_image_url = job_data.get("source_image_url")
-
-            # ── Step 1: Detect real people and sanitize upfront ──
+            
             print(f"[{jid}] [pipeline] 7a. Detecting real people in prompt...", flush=True)
             analysis = await detect_and_sanitize(title, outcome)
 
-            # Decide which title/outcome to use for Veo (always safe versions)
             veo_title = analysis.safe_title
             veo_outcome = analysis.safe_outcome
 
@@ -304,11 +293,8 @@ class JobService:
             else:
                 print(f"[{jid}] [pipeline] ↳ No real people detected, using original prompt", flush=True)
 
-            # ── Step 2: Get starting frame ──
             source_image = None
 
-            # Use provided source_image_url ONLY if no real people detected
-            # (Veo's multimodal safety will reject celebrity faces in images)
             if not analysis.has_real_people and source_image_url:
                 print(f"[{jid}] [pipeline] 7c. Fetching source image from URL: {source_image_url[:80]}", flush=True)
                 source_image = await fetch_image_from_url(source_image_url)
@@ -319,7 +305,6 @@ class JobService:
             elif analysis.has_real_people and source_image_url:
                 print(f"[{jid}] [pipeline] ↳ Skipping source_image_url (real people detected — would trigger Veo safety)", flush=True)
 
-            # Fallback: generate via Gemini Imagen (uses safe prompt so no real faces)
             if not source_image:
                 print(f"[{jid}] [pipeline] 7d. Generating starting frame via Gemini Imagen...", flush=True)
                 image_prompt = create_first_image_prompt(
@@ -333,14 +318,12 @@ class JobService:
                 else:
                     raise ValueError("Failed to generate starting frame — all methods exhausted")
 
-            # ── Step 3: Upload starting frame to GCS ──
             image_uri = ""
             if self.bucket and source_image:
                 print(f"[{jid}] [pipeline] 7e. Uploading starting frame to GCS...", flush=True)
                 image_uri = await asyncio.to_thread(self._upload_image_sync, job_id, 1, source_image)
                 print(f"[{jid}] [pipeline] ↳ Uploaded: {image_uri}", flush=True)
 
-            # ── Step 4: Generate video via Veo (always using safe prompt) ──
             print(f"[{jid}] [pipeline] 8. Submitting to Veo for video generation (720p)...", flush=True)
             print(f"[{jid}] [pipeline] ↳ veo_title=\"{veo_title}\"", flush=True)
             print(f"[{jid}] [pipeline] ↳ veo_outcome=\"{veo_outcome}\"", flush=True)

@@ -1,6 +1,5 @@
 # Job controller for video generation pipeline
 from datetime import datetime
-
 from blacksheep import json
 from blacksheep.server.controllers import APIController, post, get
 from services.job_service import JobService

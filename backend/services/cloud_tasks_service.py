@@ -12,7 +12,6 @@ class CloudTasksService:
         )
 
     def enqueue_video_job(self, job_id: str, job_data: dict) -> str:
-        """Enqueue a video generation job to Cloud Tasks"""
         task = {
             "http_request": {
                 "http_method": tasks_v2.HttpMethod.POST,

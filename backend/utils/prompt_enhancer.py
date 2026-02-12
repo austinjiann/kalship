@@ -1,6 +1,5 @@
 import json
 from dataclasses import dataclass
-
 from openai import AsyncOpenAI
 from utils.env import settings
 
@@ -36,11 +35,10 @@ class PromptAnalysis:
     safe_outcome: str
 
 
+# because veo don't let celebrity names smh
 def _names_leak_check(detected_names: list[str], safe_title: str, safe_outcome: str) -> bool:
-    """Return True if ANY detected name still appears in the safe text."""
     combined = f"{safe_title} {safe_outcome}".lower()
     for name in detected_names:
-        # Check full name and each individual part (first/last)
         parts = [name] + name.split()
         for part in parts:
             part_lower = part.lower().strip()
@@ -50,12 +48,8 @@ def _names_leak_check(detected_names: list[str], safe_title: str, safe_outcome: 
     return False
 
 
+# veo not letting celebrities part 2
 async def detect_and_sanitize(title: str, outcome: str) -> PromptAnalysis:
-    """Detect real people in the prompt and produce sanitized versions.
-
-    Single OpenAI call that handles everything upfront, with hard validation
-    that no detected names leak into the safe text sent to Veo.
-    """
     user_message = f"""Title: {title}
 Outcome: {outcome}"""
 
@@ -81,7 +75,6 @@ Outcome: {outcome}"""
         safe_title = parsed.get("safe_title", title)
         safe_outcome = parsed.get("safe_outcome", outcome)
 
-        # ── Hard validation: if names were detected, verify they're gone ──
         if has_real_people or detected_names:
             if _names_leak_check(detected_names, safe_title, safe_outcome):
                 print(f"[prompt_enhancer] GPT sanitization leaked names — using generic fallback", flush=True)
@@ -92,12 +85,7 @@ Outcome: {outcome}"""
                     safe_outcome="the predicted outcome happens",
                 )
 
-        # ── Extra safety: even if GPT said no real people, double-check ──
-        # Compare safe vs original — if they're identical, GPT may have
-        # missed the names entirely. Check original for capitalized
-        # multi-word sequences that look like names.
         if not has_real_people and safe_title == title and safe_outcome == outcome:
-            # GPT said no real people and didn't change anything — trust it
             pass
 
         print(f"[prompt_enhancer] Sanitization OK — safe_title=\"{safe_title}\", safe_outcome=\"{safe_outcome}\"", flush=True)

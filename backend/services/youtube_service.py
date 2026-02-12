@@ -1,7 +1,5 @@
 import ssl
-
 import aiohttp
-
 from utils.env import settings
 
 # Disable SSL verification for local dev (macOS Python SSL cert issue)
@@ -30,17 +28,16 @@ class YoutubeService:
                     thumbnails.get("default", {}).get("url", "")
                     or thumbnails.get("medium", {}).get("url", "")
                 )
-        except Exception as e:  # pragma: no cover - logging side effect only
+        except Exception as e:
             print(f"[channel_thumbnail] Failed to fetch for {channel_id}: {e}")
         return ""
 
     async def batch_check_embeddable(self, video_ids: list[str]) -> list[str]:
-        """Filter video IDs to only those that are embeddable."""
         if not video_ids:
             return []
 
         embeddable_ids: list[str] = []
-        # YouTube API allows up to 50 IDs per request
+        # YouTube API allows up to 50 IDs per request (bottleneck)
         for i in range(0, len(video_ids), 50):
             batch = video_ids[i : i + 50]
             url = "https://www.googleapis.com/youtube/v3/videos"
@@ -66,7 +63,6 @@ class YoutubeService:
                     embeddable_ids.append(video_id)
             except Exception as e:
                 print(f"[embed_check] Batch check failed: {e}")
-                # On failure, pass through all IDs rather than blocking them
                 embeddable_ids.extend(batch)
 
         return embeddable_ids

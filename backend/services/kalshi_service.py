@@ -72,11 +72,10 @@ class KalshiService:
         return None
 
     def _load_private_key(self):
-        # Check if we have the base64-encoded key (Cloud Run)
+        # cloud run or local check
         if settings.KALSHI_PRIVATE_KEY_BASE64:
             key_bytes = base64.b64decode(settings.KALSHI_PRIVATE_KEY_BASE64)
             return serialization.load_pem_private_key(key_bytes, password=None)
-        # Otherwise read from file (local development)
         else:
             with open(settings.KALSHI_PRIVATE_KEY_PATH, "rb") as f:
                 return serialization.load_pem_private_key(f.read(), password=None)
@@ -114,7 +113,7 @@ class KalshiService:
                     timeout=aiohttp.ClientTimeout(total=15),
                 ) as response:
                     if response.status == 429 and attempt < 3:
-                        pass  # will sleep after releasing semaphore
+                        pass 
                     else:
                         response.raise_for_status()
                         return await response.json()
@@ -125,7 +124,6 @@ class KalshiService:
         return {}
 
     async def get_all_events(self, status: str = "open") -> list[dict]:
-        """Fetch ALL open events with nested markets, paginating via cursor."""
         all_events: list[dict] = []
         cursor: str | None = None
         while True:
@@ -184,7 +182,6 @@ class KalshiService:
         return data
 
     async def find_series_image(self, series_ticker: str) -> str:
-        """Search sibling events in the same series for a non-fallback image."""
         if series_ticker in _series_image_cache:
             return _series_image_cache[series_ticker]
 
@@ -379,9 +376,6 @@ class KalshiService:
 
     @classmethod
     def _extract_candle_close_cents(cls, candle: dict) -> Optional[float]:
-        # Primary: use price.close (actual last trade price)
-        # Do NOT fall back to yes_bid — bid prices in thin markets diverge
-        # significantly from the trade price that Kalshi's website displays.
         price_payload = candle.get("price", {})
         if isinstance(price_payload, dict):
             close_cents = cls.to_cents(
@@ -390,14 +384,12 @@ class KalshiService:
             if close_cents is not None:
                 return close_cents
 
-        # Fallback: previous_price carries forward last known trade price
         synthetic_previous = cls.to_cents(
             candle.get("previous_price"), candle.get("previous_price_dollars")
         )
         if synthetic_previous is not None:
             return synthetic_previous
 
-        # Last resort: price.previous
         if isinstance(price_payload, dict):
             previous = cls.to_cents(
                 price_payload.get("previous"), price_payload.get("previous_dollars")

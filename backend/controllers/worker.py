@@ -15,7 +15,6 @@ class Worker(APIController):
     
     @post("/process")
     async def process_job(self, data: dict) -> Response:
-        # Support queued legacy jobs that still send "caption".
         if not data.get("outcome") and data.get("caption"):
             data["outcome"] = data.get("caption")
 
@@ -29,7 +28,6 @@ class Worker(APIController):
 
         job_id = data["job_id"]
 
-        # Process the job
         await self.job_service.process_video_job(job_id, data)
 
         return json({"status": "processing", "job_id": job_id})
