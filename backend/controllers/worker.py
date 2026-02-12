@@ -5,6 +5,10 @@ from services.job_service import JobService
 from services.crawler_service import CrawlerService
 
 class Worker(APIController):
+    @classmethod
+    def route(cls):
+        return "/worker"
+
     def __init__(self, job_service: JobService, crawler_service: CrawlerService):
         self.job_service = job_service
         self.crawler_service = crawler_service
