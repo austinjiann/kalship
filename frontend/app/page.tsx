@@ -180,6 +180,15 @@ export default function Home() {
   const [tradeAmount, setTradeAmount] = useState('')
   const [adviceLoading, setAdviceLoading] = useState(false)
   const [adviceText, setAdviceText] = useState<string | null>(null)
+  const [isMobile, setIsMobile] = useState(false)
+
+  // Detect mobile viewport
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -1204,6 +1213,63 @@ export default function Home() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* Mobile gate overlay */}
+      <AnimatePresence>
+        {isMobile && (
+          <>
+            <motion.div
+              key="mobile-backdrop"
+              className="fixed inset-0 z-[100]"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+              style={{ background: 'rgba(0, 0, 0, 0.85)', backdropFilter: 'blur(12px)' }}
+            />
+            <motion.div
+              key="mobile-modal"
+              className="fixed inset-0 z-[101] flex items-center justify-center p-6"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+            >
+              <motion.div
+                initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.5, ease: easeCubic }}
+                className="rounded-2xl p-8 max-w-[360px] w-full text-center"
+                style={{
+                  background: 'rgba(30, 30, 30, 0.92)',
+                  backdropFilter: 'blur(20px)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
+                  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+                  fontFamily: 'var(--font-playfair), serif',
+                }}
+              >
+                
+                <Image
+                  src="/kalship-logo-white.png"
+                  alt="Kalship"
+                  width={160}
+                  height={52}
+                  className="mx-auto mb-4 h-auto w-[140px]"
+                  style={{ filter: 'drop-shadow(0 0 10px rgba(74, 201, 151, 0.62))' }}
+                />
+                <h2 className="text-white/90 text-lg font-semibold mb-2">
+                  Desktop Experience Only
+                </h2>
+                <p className="text-white/50 text-sm leading-relaxed mb-6">
+                  Kalship is built for desktop. Open this page on a computer for the full scroll-and-trade experience.
+                </p>
+                
+              </motion.div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Spacebar hint — only tutorial stages */}
       {!isFeed && (
